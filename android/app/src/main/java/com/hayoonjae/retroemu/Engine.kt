@@ -30,13 +30,15 @@ class Engine(private val ctx: Context) {
     @Volatile var padMask = 0
 
     /** 화면 갱신 알림(Compose가 읽으면 다시 그림) */
-    var frameTick by mutableIntStateOf(0)
-    @Volatile var bitmap: Bitmap? = null
-    @Volatile var aspect = 4.0 / 3.0
+    /** 화면 비율(바뀔 때만 Compose 가 다시 배치) */
+    var aspect by mutableStateOf(4.0 / 3.0)
+    /** 화면 뷰 픽셀 크기. 0이면 아직 서피스 없음 */
+    @Volatile private var viewW = 0
+    @Volatile private var viewH = 0
+    /** 서피스가 새로 생겼으면 멈춰 있어도 마지막 화면을 다시 그린다 */
+    @Volatile private var redraw = false
     var toast: String? by mutableStateOf(null)
 
-    private var front: Bitmap? = null
-    private var back: Bitmap? = null
     private var sramPath = ""
     /** saves/<롬 이름>. 슬롯 파일은 .<슬롯>.state / .<슬롯>.png */
     private var base = ""
@@ -92,7 +94,9 @@ class Engine(private val ctx: Context) {
     /** 에뮬 스레드(또는 에뮬 스레드가 멈춘 뒤)에서만 부른다 */
     private fun saveSlot(id: String): Boolean {
         if (!Native.stateSave(stateFile(id).path)) return false
-        val shot = front
+        val shot = Native.size()?.let { sz ->
+            Bitmap.createBitmap(sz[0], sz[1], Bitmap.Config.ARGB_8888).takeIf { Native.copyFrame(it) }
+        }
         val t = thumbFile(id)
         if (shot != null) {
             val tmp = File(t.path + ".tmp")
@@ -126,30 +130,31 @@ class Engine(private val ctx: Context) {
         var n = 0
         while (running) {
             while (true) { (tasks.poll() ?: break)() }
+            if (redraw) { redraw = false; present() }
             if (halted) { LockSupport.parkNanos(20_000_000); next = System.nanoTime(); continue }
             Native.setInput(synchronized(maskLock) { mask } or padMask)
             Native.run()
             framesRun++
             if (++n % 600 == 0) Native.sramSave(sramPath)
             val s = Native.serial()
-            if (s != lastSerial) { lastSerial = s; publish() }
+            if (s != lastSerial) { lastSerial = s; present() }
             next += frameNs
             val now = System.nanoTime()
             if (next - now > 0) LockSupport.parkNanos(next - now) else if (now - next > 100_000_000) next = now
         }
     }
 
-    private fun publish() {
-        val sz = Native.size() ?: return
-        var b = back
-        if (b == null || b.width != sz[0] || b.height != sz[1]) {
-            b = Bitmap.createBitmap(sz[0], sz[1], Bitmap.Config.ARGB_8888)
-        }
-        if (!Native.copyFrame(b)) return
-        back = front; front = b
-        bitmap = b
-        aspect = Native.aspect()
-        frameTick++
+    /** SurfaceView 의 서피스가 생기거나 바뀌거나 없어질 때(메인 스레드) */
+    fun setSurface(surface: android.view.Surface?, w: Int, h: Int) {
+        Native.setSurface(surface)
+        viewW = w; viewH = h
+        redraw = surface != null
+    }
+
+    private fun present() {
+        if (viewW > 0) Native.present(viewW, viewH)
+        val a = Native.aspect()
+        if (a != aspect) aspect = a
     }
 
     private fun audioLoop() {

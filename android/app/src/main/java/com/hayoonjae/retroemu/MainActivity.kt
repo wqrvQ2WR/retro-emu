@@ -370,12 +370,19 @@ fun MenuItem(text: String, onClick: () -> Unit) {
 
 @Composable
 fun Screen(engine: Engine) {
-    Canvas(Modifier.aspectRatio(engine.aspect.toFloat().coerceIn(0.5f, 3f)).fillMaxWidth().heightIn(max = 4000.dp).background(Color.Black)) {
-        engine.frameTick  // 그리기 안에서만 읽어서 새 프레임마다 다시 그리기만 한다(화면 구성은 그대로)
-        val bmp = engine.bitmap
-        if (bmp != null) drawImage(bmp.asImageBitmap(), dstOffset = IntOffset.Zero, dstSize = IntSize(size.width.toInt(), size.height.toInt()),
-            filterQuality = FilterQuality.None)
-    }
+    // 에뮬 스레드가 이 서피스에 바로 그린다. 컴포즈는 자리만 잡아 준다.
+    androidx.compose.ui.viewinterop.AndroidView(
+        factory = { c ->
+            android.view.SurfaceView(c).apply {
+                holder.addCallback(object : android.view.SurfaceHolder.Callback {
+                    override fun surfaceCreated(h: android.view.SurfaceHolder) {}
+                    override fun surfaceChanged(h: android.view.SurfaceHolder, f: Int, w: Int, hh: Int) = engine.setSurface(h.surface, w, hh)
+                    override fun surfaceDestroyed(h: android.view.SurfaceHolder) = engine.setSurface(null, 0, 0)
+                })
+            }
+        },
+        modifier = Modifier.aspectRatio(engine.aspect.toFloat().coerceIn(0.5f, 3f)).fillMaxWidth().heightIn(max = 4000.dp).background(Color.Black)
+    )
 }
 
 // ---- 터치 컨트롤 ----

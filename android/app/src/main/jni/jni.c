@@ -1,5 +1,7 @@
 #include <jni.h>
 #include <android/bitmap.h>
+#include <android/native_window_jni.h>
+#include <pthread.h>
 #include <string.h>
 #include "rhost.h"
 
@@ -52,3 +54,47 @@ PATHFN(stateSave, rh_state_save)
 PATHFN(stateLoad, rh_state_load)
 PATHFN(sramSave, rh_sram_save)
 PATHFN(sramLoad, rh_sram_load)
+
+// ---- 화면 출력: SurfaceView 버퍼에 바로 쓴다(컴포즈를 거치지 않음) ----
+// 픽셀은 정수배로 키워서 넣고, 남은 비율은 하드웨어 합성기가 맞춘다(선명함 유지).
+static pthread_mutex_t g_wmu = PTHREAD_MUTEX_INITIALIZER;
+static ANativeWindow *g_win;
+static int g_gw, g_gh;  // 지금 버퍼 크기
+
+F(void, setSurface)(JNIEnv *e, jobject o, jobject surf) {
+  pthread_mutex_lock(&g_wmu);
+  if (g_win) { ANativeWindow_release(g_win); g_win = NULL; }
+  if (surf) g_win = ANativeWindow_fromSurface(e, surf);
+  g_gw = g_gh = 0;
+  pthread_mutex_unlock(&g_wmu);
+}
+
+// maxW/maxH: 화면 뷰의 실제 픽셀 크기
+F(jboolean, present)(JNIEnv *e, jobject o, jint maxW, jint maxH) {
+  const uint8_t *p; int w, h;
+  if (!rh_video(&p, &w, &h) || w <= 0 || h <= 0) return 0;
+  pthread_mutex_lock(&g_wmu);
+  if (!g_win) { pthread_mutex_unlock(&g_wmu); return 0; }
+  int k = maxW / w; if (maxH / h < k) k = maxH / h;
+  if (k < 1) k = 1; if (k > 6) k = 6;
+  int bw = w * k, bh = h * k;
+  if (bw != g_gw || bh != g_gh) {
+    ANativeWindow_setBuffersGeometry(g_win, bw, bh, WINDOW_FORMAT_RGBX_8888);
+    g_gw = bw; g_gh = bh;
+  }
+  ANativeWindow_Buffer b;
+  if (ANativeWindow_lock(g_win, &b, NULL) < 0) { pthread_mutex_unlock(&g_wmu); return 0; }
+  if (b.width < bw || b.height < bh) { ANativeWindow_unlockAndPost(g_win); pthread_mutex_unlock(&g_wmu); return 0; }
+  const uint32_t *src = (const uint32_t *)p;
+  uint32_t *dst = (uint32_t *)b.bits;
+  for (int y = 0; y < h; y++) {
+    uint32_t *row = dst + (size_t)y * k * b.stride;
+    const uint32_t *s = src + (size_t)y * w;
+    if (k == 1) memcpy(row, s, (size_t)w * 4);
+    else for (int x = 0; x < w; x++) { uint32_t v = s[x]; uint32_t *d = row + x * k; for (int i = 0; i < k; i++) d[i] = v; }
+    for (int r = 1; r < k; r++) memcpy(row + (size_t)r * b.stride, row, (size_t)bw * 4);
+  }
+  ANativeWindow_unlockAndPost(g_win);
+  pthread_mutex_unlock(&g_wmu);
+  return 1;
+}
