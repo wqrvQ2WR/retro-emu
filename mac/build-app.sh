@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")/.."
 swift build -c release
-APP=~/Applications/RetroEmu.app
+APP=/Applications/RetroEmu.app; [ -w /Applications ] || APP=~/Applications/RetroEmu.app
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/cores"
 cp .build/release/RetroEmu "$APP/Contents/MacOS/"
 cp cores/mac/*.dylib "$APP/Contents/Resources/cores/"

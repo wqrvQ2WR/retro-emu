@@ -3,7 +3,7 @@
 고전게임 에뮬레이터. 맥과 안드로이드에서 돈다. 패미컴, 게임보이/컬러/어드밴스, 슈퍼패미컴, 메가드라이브, PS1.
 
 - `host/` 공용 C 호스트(rhost). libretro 코어를 dlopen 해서 영상(RGBA)·소리·입력·세이브를 처리
-- `mac/` SwiftUI 앱. `mac/build-app.sh` -> ~/Applications/RetroEmu.app
+- `mac/` SwiftUI 앱. `mac/build-app.sh` -> /Applications/RetroEmu.app
 - `android/` Compose + JNI(ndk-build). NDK 27.2.12479018 필요
 - `fetch-cores.sh` 코어 받기(libretro 공식 nightly). 롬은 직접 넣어야 한다.
 - `tests/mk_nes.py` 직접 만든 테스트 롬 생성
