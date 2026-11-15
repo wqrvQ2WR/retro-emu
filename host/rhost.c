@@ -84,7 +84,15 @@ static bool env_cb(unsigned cmd, void *data) {
   case RETRO_ENVIRONMENT_GET_LOG_INTERFACE: ((struct retro_log_callback *)data)->log = log_cb; return true;
   case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS: return true;
   case RETRO_ENVIRONMENT_SET_VARIABLES: return true;
-  case RETRO_ENVIRONMENT_GET_VARIABLE: return false; // 코어 기본값 사용
+  case RETRO_ENVIRONMENT_GET_VARIABLE: { // 몇 개만 바꾸고 나머지는 코어 기본값
+    struct retro_variable *v = data;
+    static const char *opts[][2] = {
+      {"mgba_sgb_borders", "OFF"},  // 슈퍼 게임보이 테두리를 빼서 게임보이 화면을 크게(색은 그대로)
+    };
+    for (size_t i = 0; v && v->key && i < sizeof opts / sizeof *opts; i++)
+      if (!strcmp(v->key, opts[i][0])) { v->value = opts[i][1]; return true; }
+    return false;
+  }
   case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE: *(bool *)data = false; return true;
   case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION: *(unsigned *)data = 0; return true;
   case RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL: return true;
