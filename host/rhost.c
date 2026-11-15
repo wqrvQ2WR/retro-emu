@@ -255,9 +255,13 @@ int rh_audio_buffered(void) { return (int)(g_wr - g_rd); }
 void rh_set_input(uint32_t m) { g_input = m; }
 
 size_t rh_state_size(void) { return g_loaded ? C.serialize_size() : 0; }
+// 임시 파일에 다 쓰고 나서 바꿔치기한다. 쓰다 죽어도 예전 저장은 남는다.
 static int write_file(const char *p, const void *d, size_t n) {
-  FILE *f = fopen(p, "wb"); if (!f) return 0;
-  size_t w = fwrite(d, 1, n, f); fclose(f); return w == n;
+  char tmp[2048]; snprintf(tmp, sizeof tmp, "%s.tmp", p);
+  FILE *f = fopen(tmp, "wb"); if (!f) return 0;
+  size_t w = fwrite(d, 1, n, f);
+  if (fclose(f) != 0 || w != n) { remove(tmp); return 0; }
+  return rename(tmp, p) == 0;
 }
 static void *read_file(const char *p, size_t *n) {
   FILE *f = fopen(p, "rb"); if (!f) return NULL;

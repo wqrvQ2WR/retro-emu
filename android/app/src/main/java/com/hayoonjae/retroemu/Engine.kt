@@ -2,6 +2,7 @@ package com.hayoonjae.retroemu
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -32,7 +33,12 @@ class Engine(private val ctx: Context) {
     private var front: Bitmap? = null
     private var back: Bitmap? = null
     private var sramPath = ""
-    private var statePath = ""
+    /** saves/<롬 이름>. 슬롯 파일은 .<슬롯>.state / .<슬롯>.png */
+    private var base = ""
+    /** 이번에 켜고 나서 돈 프레임 수. 거의 안 했으면 나갈 때 자동 저장을 덮어쓰지 않는다. */
+    private var framesRun = 0
+    /** 저장 목록이 바뀌면 올라간다(Compose 가 다시 읽게) */
+    var slotsVersion by mutableIntStateOf(0)
 
     fun press(bit: Int, down: Boolean) = synchronized(maskLock) {
         mask = if (down) mask or (1 shl bit) else mask and (1 shl bit).inv()
@@ -48,7 +54,10 @@ class Engine(private val ctx: Context) {
             val e = Native.error(); Native.close(); return e.ifEmpty { "열 수 없어요" }
         }
         sramPath = "$saves/${rom.name}.srm"
-        statePath = "$saves/${rom.name}.state"
+        base = "$saves/${rom.name}"
+        // 예전 한 칸짜리 저장은 1번 슬롯으로 옮긴다
+        File("$base.state").let { if (it.exists() && !stateFile("1").exists()) it.renameTo(stateFile("1")) }
+        framesRun = 0
         Native.sramLoad(sramPath)
         aspect = Native.aspect()
         running = true
@@ -61,12 +70,42 @@ class Engine(private val ctx: Context) {
         if (!running) return
         running = false
         emuThread?.join(); audioThread?.join()
+        if (framesRun >= 300) saveSlot("auto")  // 나갈 때 자동 저장(5초 넘게 했을 때만)
         Native.sramSave(sramPath)
         Native.close()
     }
 
-    fun saveState() = tasks.add { show(if (Native.stateSave(statePath)) "상태 저장함" else "상태 저장을 못 했어요") }
-    fun loadState() = tasks.add { show(if (Native.stateLoad(statePath)) "상태 불러옴" else "저장한 상태가 없어요") }
+    private fun stateFile(id: String) = File("$base.$id.state")
+    private fun thumbFile(id: String) = File("$base.$id.png")
+
+    fun slots(): List<SaveSlot> = SLOT_IDS.map { id ->
+        val f = stateFile(id)
+        if (!f.exists()) SaveSlot(id, null, null)
+        else SaveSlot(id, f.lastModified(), thumbFile(id).takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path) })
+    }
+
+    /** 에뮬 스레드(또는 에뮬 스레드가 멈춘 뒤)에서만 부른다 */
+    private fun saveSlot(id: String): Boolean {
+        if (!Native.stateSave(stateFile(id).path)) return false
+        val shot = front
+        val t = thumbFile(id)
+        if (shot != null) {
+            val tmp = File(t.path + ".tmp")
+            tmp.outputStream().use { shot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            tmp.renameTo(t)
+        } else t.delete()
+        return true
+    }
+
+    fun save(id: String) = tasks.add {
+        show(if (saveSlot(id)) "${SaveSlot.name(id)}에 저장함" else "이 게임은 상태 저장을 못 해요")
+        slotsVersion++
+    }
+    fun load(id: String) = tasks.add {
+        val ok = Native.stateLoad(stateFile(id).path)
+        show(if (ok) "${SaveSlot.name(id)} 불러옴" else "${SaveSlot.name(id)}이 비어 있어요")
+    }
+    fun delete(id: String) { stateFile(id).delete(); thumbFile(id).delete(); slotsVersion++ }
     private fun show(s: String) { toast = s }
 
     private fun emuLoop() {
@@ -79,6 +118,7 @@ class Engine(private val ctx: Context) {
             if (paused) { LockSupport.parkNanos(20_000_000); next = System.nanoTime(); continue }
             Native.setInput(synchronized(maskLock) { mask })
             Native.run()
+            framesRun++
             if (++n % 600 == 0) Native.sramSave(sramPath)
             val s = Native.serial()
             if (s != lastSerial) { lastSerial = s; publish() }
@@ -120,4 +160,11 @@ class Engine(private val ctx: Context) {
         }
         track.stop(); track.release()
     }
+}
+
+val SLOT_IDS = listOf("auto", "1", "2", "3", "4", "5", "6")
+
+class SaveSlot(val id: String, val time: Long?, val thumb: Bitmap?) {
+    val isAuto get() = id == "auto"
+    companion object { fun name(id: String) = if (id == "auto") "자동 저장" else "${id}번 슬롯" }
 }

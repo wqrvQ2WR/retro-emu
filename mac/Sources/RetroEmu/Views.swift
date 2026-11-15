@@ -120,6 +120,8 @@ final class GameNSView: NSView {
 
 struct GameSurface: NSViewRepresentable {
   let emu: Emulator
+  /// 저장 목록이 열려 있으면 게임 키를 안 보낸다
+  let panelOpen: Bool
   let onSpecial: (UInt16) -> Void
 
   func makeNSView(context: Context) -> GameNSView {
@@ -130,14 +132,20 @@ struct GameSurface: NSViewRepresentable {
     v.layer?.minificationFilter = .linear
     v.layer?.contentsGravity = .resizeAspect
     v.onKey = { code, down in
-      if let b = Emulator.bit(forKeyCode: code) {
+      if let b = Emulator.bit(forKeyCode: code), !context.coordinator.panelOpen {
         if down { emu.keyMask |= b } else { emu.keyMask &= ~b }
       } else if down { onSpecial(code) }
     }
     emu.onFrame = { [weak v] img, _ in v?.layer?.contents = img }
     return v
   }
-  func updateNSView(_ v: GameNSView, context: Context) {}
+  func updateNSView(_ v: GameNSView, context: Context) {
+    context.coordinator.panelOpen = panelOpen
+    // 목록의 버튼을 누르면 키 입력을 뺏길 수 있어서 다시 가져온다
+    DispatchQueue.main.async { if v.window?.firstResponder !== v { v.window?.makeFirstResponder(v) } }
+  }
+  func makeCoordinator() -> Coord { Coord() }
+  final class Coord { var panelOpen = false }
 }
 
 struct PlayView: View {
@@ -146,23 +154,37 @@ struct PlayView: View {
   @State private var emu = Emulator()
   @State private var toast: String?
   @State private var toastGen = 0
+  @State private var panel = false
+  @State private var slots: [SaveSlot] = []
+  /// F1/F2 가 쓰는 슬롯
+  @State private var quickSlot = "1"
 
   var body: some View {
     ZStack(alignment: .top) {
       Color.black.ignoresSafeArea()
-      GameSurface(emu: emu) { code in
+      GameSurface(emu: emu, panelOpen: panel) { code in
         switch code {
-        case 53: quit()                 // Esc
-        case 122: emu.saveState()       // F1
-        case 120: emu.loadState()       // F2
+        case 53: if panel { setPanel(false) } else { quit() }  // Esc
+        case 122: emu.save(slot: quickSlot)  // F1
+        case 120: emu.load(slot: quickSlot)  // F2
+        case 99: setPanel(!panel)            // F3
         default: break
         }
+      }
+      if panel {
+        SlotPanel(slots: slots, quickSlot: quickSlot,
+                  onSave: { id in quickSlot = id; emu.save(slot: id) { slots = emu.slots() } },
+                  onLoad: { id in if !SaveSlot.isAutoId(id) { quickSlot = id }; emu.load(slot: id); setPanel(false) },
+                  onDelete: { id in emu.delete(slot: id); slots = emu.slots() },
+                  onClose: { setPanel(false) })
+          .transition(.opacity)
       }
       if let t = toast {
         Text(t).font(.system(size: 14, weight: .bold)).foregroundColor(.white)
           .padding(.horizontal, 16).padding(.vertical, 8)
           .background(accent, in: Capsule()).padding(.top, 16)
           .transition(.opacity)
+          .allowsHitTesting(false)
       }
     }
     .onAppear {
@@ -170,11 +192,20 @@ struct PlayView: View {
       if let err = emu.start(rom: game.path, system: game.system) {
         model.playing = nil
         model.error = err
+      } else if emu.slots().first(where: { $0.isAuto })?.date != nil {
+        // 지난번에 나갈 때 자동 저장한 게 있으면 바로 고를 수 있게 목록부터 연다
+        setPanel(true)
       } else {
-        show("Esc 나가기 · F1 저장 · F2 불러오기")
+        show("Esc 나가기 · F1 저장 · F2 불러오기 · F3 저장 목록")
       }
     }
     .onDisappear { emu.stop() }
+  }
+
+  func setPanel(_ open: Bool) {
+    if open { slots = emu.slots() }
+    emu.setPaused(open)
+    withAnimation(.easeOut(duration: 0.15)) { panel = open }
   }
 
   func quit() { model.playing = nil }
@@ -186,5 +217,99 @@ struct PlayView: View {
     DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
       if g == toastGen { withAnimation { toast = nil } }
     }
+  }
+}
+
+// MARK: - 저장 목록
+
+struct SlotPanel: View {
+  let slots: [SaveSlot]
+  let quickSlot: String
+  let onSave: (String) -> Void
+  let onLoad: (String) -> Void
+  let onDelete: (String) -> Void
+  let onClose: () -> Void
+  @State private var overwrite: String?
+
+  var body: some View {
+    ZStack {
+      Color.black.opacity(0.55).ignoresSafeArea().onTapGesture(perform: onClose)
+      VStack(alignment: .leading, spacing: 14) {
+        HStack {
+          Text("저장 / 불러오기").font(.system(size: 22, weight: .heavy)).foregroundStyle(accent)
+          Spacer()
+          Text("Esc 닫기 · F1/F2 는 마지막에 고른 슬롯")
+            .font(.system(size: 12, weight: .medium)).foregroundColor(.black.opacity(0.45))
+        }
+        ScrollView {
+          LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {
+            ForEach(slots) { s in
+              SlotCard(slot: s, selected: s.id == quickSlot,
+                       onSave: { if s.date != nil { overwrite = s.id } else { onSave(s.id) } },
+                       onLoad: { onLoad(s.id) })
+                .contextMenu { if s.date != nil { Button("지우기") { onDelete(s.id) } } }
+            }
+          }.padding(2)
+        }
+      }
+      .padding(22)
+      .frame(maxWidth: 820, maxHeight: 600)
+      .background(bgGradient, in: RoundedRectangle(cornerRadius: 24))
+      .shadow(color: .black.opacity(0.3), radius: 30, y: 10)
+      .padding(28)
+    }
+    .alert("덮어쓸까요?", isPresented: Binding(get: { overwrite != nil }, set: { if !$0 { overwrite = nil } })) {
+      Button("덮어쓰기") { if let id = overwrite { onSave(id) }; overwrite = nil }
+      Button("취소", role: .cancel) { overwrite = nil }
+    } message: { Text("\(SaveSlot.name(overwrite ?? "1"))에 있던 저장이 지워져요.") }
+  }
+}
+
+struct SlotCard: View {
+  let slot: SaveSlot
+  let selected: Bool
+  let onSave: () -> Void
+  let onLoad: () -> Void
+
+  static let fmt: DateFormatter = {
+    let f = DateFormatter(); f.locale = Locale(identifier: "ko_KR"); f.dateFormat = "M월 d일 a h:mm"; return f
+  }()
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      ZStack {
+        Color.black
+        if let t = slot.thumb {
+          Image(nsImage: t).resizable().interpolation(.none).aspectRatio(contentMode: .fit)
+        } else {
+          Text(slot.date == nil ? "비어 있음" : "화면 없음").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.5))
+        }
+      }
+      .aspectRatio(4 / 3, contentMode: .fit)
+      .clipShape(RoundedRectangle(cornerRadius: 12))
+      HStack(alignment: .firstTextBaseline) {
+        Text(SaveSlot.name(slot.id)).font(.system(size: 14, weight: .heavy)).foregroundColor(.black.opacity(0.8))
+        Spacer(minLength: 4)
+        Text(slot.date.map { SlotCard.fmt.string(from: $0) } ?? "")
+          .font(.system(size: 11, weight: .medium)).foregroundColor(.black.opacity(0.5)).lineLimit(1)
+      }
+      HStack(spacing: 8) {
+        if !slot.isAuto { pill("저장", filled: false, action: onSave) }
+        pill("불러오기", filled: true, action: onLoad).disabled(slot.date == nil).opacity(slot.date == nil ? 0.35 : 1)
+      }
+    }
+    .padding(10)
+    .background(Color.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 16))
+    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(accent, lineWidth: selected ? 3 : 0))
+  }
+
+  func pill(_ t: String, filled: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Text(t).font(.system(size: 13, weight: .bold))
+        .frame(maxWidth: .infinity).padding(.vertical, 7)
+        .foregroundColor(filled ? .white : Color(red: 0.36, green: 0.2, blue: 0.75))
+        .background(filled ? AnyShapeStyle(accent) : AnyShapeStyle(Color(red: 0.93, green: 0.91, blue: 1.0)), in: Capsule())
+        .contentShape(Capsule())
+    }.buttonStyle(.plain)
   }
 }

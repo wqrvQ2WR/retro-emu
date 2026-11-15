@@ -27,6 +27,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -170,15 +171,20 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
     val sys = remember { GameSystem.of(rom)!! }
     var started by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    var slotsOpen by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         view.keepScreenOn = true
         val err = engine.start(rom, sys)
-        if (err != null) onError(err) else started = true
+        if (err != null) onError(err) else {
+            started = true
+            // 지난번에 나갈 때 자동 저장한 게 있으면 저장 목록부터 연다
+            if (engine.slots().first().time != null) { menu = true; slotsOpen = true }
+        }
         onDispose { view.keepScreenOn = false; engine.stop() }
     }
     LaunchedEffect(menu) { engine.paused = menu; if (menu) engine.releaseAll() }
-    BackHandler { menu = !menu }
+    BackHandler { if (slotsOpen) slotsOpen = false else menu = !menu }
     LaunchedEffect(engine.toast) { if (engine.toast != null) { kotlinx.coroutines.delay(1800); engine.toast = null } }
     if (!started) return
 
@@ -229,12 +235,88 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
                 Column(Modifier.clip(RoundedCornerShape(24.dp)).background(Color.White).padding(20.dp).widthIn(min = 240.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     MenuItem("이어하기") { menu = false }
-                    MenuItem("상태 저장") { engine.saveState(); menu = false }
-                    MenuItem("상태 불러오기") { engine.loadState(); menu = false }
+                    MenuItem("저장 / 불러오기") { slotsOpen = true }
                     MenuItem("나가기") { onExit() }
                 }
             }
         }
+        if (menu && slotsOpen) {
+            SlotSheet(engine, onClose = { slotsOpen = false }, onLoaded = { slotsOpen = false; menu = false })
+        }
+    }
+}
+
+private val slotTimeFmt = java.text.SimpleDateFormat("M월 d일 a h:mm", java.util.Locale.KOREAN)
+
+/** 저장 칸 목록. 저장은 게임이 멈춘 채로 하고, 불러오면 바로 게임으로 돌아간다. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SlotSheet(engine: Engine, onClose: () -> Unit, onLoaded: () -> Unit) {
+    val slots = remember(engine.slotsVersion) { engine.slots() }
+    var overwrite by remember { mutableStateOf<String?>(null) }
+    var del by remember { mutableStateOf<String?>(null) }
+    Box(Modifier.fillMaxSize().background(Color(0x99000000)).pointerInput(Unit) { awaitEachGesture { awaitFirstDown() } }
+        .systemBarsPadding().padding(12.dp), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 720.dp).fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(LightBg).padding(16.dp)) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("저장 / 불러오기", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
+                    style = androidx.compose.ui.text.TextStyle(brush = AccentBrush), modifier = Modifier.weight(1f))
+                Box(Modifier.clip(CircleShape).background(Color(0xFFEDE8FF)).combinedClickable(onClick = onClose)
+                    .padding(horizontal = 14.dp, vertical = 8.dp)) {
+                    Text("닫기", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF5B33BF))
+                }
+            }
+            LazyVerticalGrid(GridCells.Adaptive(150.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(slots, key = { it.id }) { s ->
+                    Column(Modifier.clip(RoundedCornerShape(16.dp)).background(Color(0xD9FFFFFF))
+                        .combinedClickable(onClick = {}, onLongClick = { if (s.time != null) del = s.id }).padding(8.dp)) {
+                        Box(Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(RoundedCornerShape(10.dp)).background(Color.Black),
+                            contentAlignment = Alignment.Center) {
+                            val t = s.thumb
+                            if (t != null) Canvas(Modifier.fillMaxSize()) {
+                                val sc = minOf(size.width / t.width, size.height / t.height)
+                                val w = (t.width * sc).toInt(); val h = (t.height * sc).toInt()
+                                drawImage(t.asImageBitmap(), dstOffset = IntOffset(((size.width - w) / 2).toInt(), ((size.height - h) / 2).toInt()),
+                                    dstSize = IntSize(w, h), filterQuality = FilterQuality.None)
+                            } else Text(if (s.time == null) "비어 있음" else "화면 없음", fontSize = 12.sp, color = Color(0x80FFFFFF))
+                        }
+                        Text(SaveSlot.name(s.id), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xCC000000),
+                            modifier = Modifier.padding(top = 6.dp))
+                        Text(s.time?.let { slotTimeFmt.format(java.util.Date(it)) } ?: "", fontSize = 11.sp, color = Color(0x80000000), maxLines = 1)
+                        Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (!s.isAuto) SlotPill("저장", false, true, Modifier.weight(1f)) {
+                                if (s.time != null) overwrite = s.id else engine.save(s.id)
+                            }
+                            SlotPill("불러오기", true, s.time != null, Modifier.weight(1f)) { engine.load(s.id); onLoaded() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    overwrite?.let { id ->
+        AlertDialog(onDismissRequest = { overwrite = null },
+            confirmButton = { TextButton(onClick = { engine.save(id); overwrite = null }) { Text("덮어쓰기") } },
+            dismissButton = { TextButton(onClick = { overwrite = null }) { Text("취소") } },
+            title = { Text("덮어쓸까요?") }, text = { Text("${SaveSlot.name(id)}에 있던 저장이 지워져요.") })
+    }
+    del?.let { id ->
+        AlertDialog(onDismissRequest = { del = null },
+            confirmButton = { TextButton(onClick = { engine.delete(id); del = null }) { Text("지우기") } },
+            dismissButton = { TextButton(onClick = { del = null }) { Text("취소") } },
+            title = { Text("${SaveSlot.name(id)} 지우기") }, text = { Text("이 저장을 지워요. 되돌릴 수 없어요.") })
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SlotPill(text: String, filled: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val bg = if (filled) AccentBrush else Brush.horizontalGradient(listOf(Color(0xFFEDE8FF), Color(0xFFEDE8FF)))
+    Box(modifier.alpha(if (enabled) 1f else 0.35f).clip(CircleShape).background(bg)
+        .then(if (enabled) Modifier.combinedClickable(onClick = onClick) else Modifier).padding(vertical = 9.dp),
+        contentAlignment = Alignment.Center) {
+        Text(text, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (filled) Color.White else Color(0xFF5B33BF))
     }
 }
 

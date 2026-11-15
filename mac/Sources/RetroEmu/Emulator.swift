@@ -10,8 +10,13 @@ final class Emulator {
   private var engine: AVAudioEngine?
   private var lastSerial: UInt64 = 0
   private var sramPath = ""
-  private var statePath = ""
+  /// saves/<롬 파일 이름>. 슬롯 파일은 여기에 .<슬롯>.state / .<슬롯>.png 를 붙인다.
+  private var base = ""
   private var sramTick = 0
+  /// 저장 목록을 보는 동안 멈춘다(큐에서만 읽고 씀)
+  private var paused = false
+  /// 이번에 켜고 나서 돈 프레임 수. 거의 안 했으면 나갈 때 자동 저장을 덮어쓰지 않는다.
+  private var framesRun = 0
 
   /// 키보드 입력 비트마스크(메인 스레드에서 쓰고 큐에서 읽음)
   var keyMask: UInt32 = 0
@@ -45,9 +50,11 @@ final class Emulator {
       }
       let base = (rom as NSString).lastPathComponent
       sramPath = saves + "/" + base + ".srm"
-      statePath = saves + "/" + base + ".state"
+      self.base = saves + "/" + base
+      migrateOldState()
       _ = rh_sram_load(sramPath)
       lastSerial = 0
+      framesRun = 0
       running = true
       startAudio()
       startTimer()
@@ -61,25 +68,67 @@ final class Emulator {
       running = false
       timer?.cancel(); timer = nil
       engine?.stop(); engine = nil
+      if framesRun >= 300 { saveSlot("auto") }  // 나갈 때 자동 저장(5초 넘게 했을 때만)
       _ = rh_sram_save(sramPath)
       rh_close()
     }
   }
 
-  func saveState() {
-    queue.async { [self] in
-      guard running else { return }
-      let ok = rh_state_save(statePath) != 0
-      toast(ok ? "상태 저장함" : "이 게임은 상태 저장을 못 해요")
+  // MARK: 슬롯 저장
+
+  static let slotIds = ["auto", "1", "2", "3", "4", "5", "6"]
+
+  private func statePath(_ id: String) -> String { base + "." + id + ".state" }
+  private func thumbPath(_ id: String) -> String { base + "." + id + ".png" }
+
+  /// 예전 한 칸짜리 저장(<롬>.state)은 1번 슬롯으로 옮긴다.
+  private func migrateOldState() {
+    let fm = FileManager.default, old = base + ".state"
+    if fm.fileExists(atPath: old), !fm.fileExists(atPath: statePath("1")) { try? fm.moveItem(atPath: old, toPath: statePath("1")) }
+  }
+
+  func slots() -> [SaveSlot] {
+    let fm = FileManager.default
+    return Emulator.slotIds.map { id in
+      let date = (try? fm.attributesOfItem(atPath: statePath(id)))?[.modificationDate] as? Date
+      return SaveSlot(id: id, date: date, thumb: date == nil ? nil : NSImage(contentsOfFile: thumbPath(id)))
     }
   }
 
-  func loadState() {
+  func setPaused(_ p: Bool) { queue.async { self.paused = p } }
+
+  /// 큐 위에서만 부른다.
+  @discardableResult private func saveSlot(_ id: String) -> Bool {
+    guard rh_state_save(statePath(id)) != 0 else { return false }
+    if let img = currentImage(), let png = NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:]) {
+      try? png.write(to: URL(fileURLWithPath: thumbPath(id)), options: .atomic)
+    } else {
+      try? FileManager.default.removeItem(atPath: thumbPath(id))
+    }
+    return true
+  }
+
+  func save(slot id: String, done: (() -> Void)? = nil) {
     queue.async { [self] in
       guard running else { return }
-      let ok = rh_state_load(statePath) != 0
-      toast(ok ? "상태 불러옴" : "저장한 상태가 없어요")
+      let ok = saveSlot(id)
+      toast(ok ? "\(SaveSlot.name(id))에 저장함" : "이 게임은 상태 저장을 못 해요")
+      DispatchQueue.main.async { done?() }
     }
+  }
+
+  func load(slot id: String) {
+    queue.async { [self] in
+      guard running else { return }
+      let ok = rh_state_load(statePath(id)) != 0
+      if ok { lastSerial = 0 }
+      toast(ok ? "\(SaveSlot.name(id)) 불러옴" : "\(SaveSlot.name(id))이 비어 있어요")
+    }
+  }
+
+  func delete(slot id: String) {
+    try? FileManager.default.removeItem(atPath: statePath(id))
+    try? FileManager.default.removeItem(atPath: thumbPath(id))
   }
 
   private func toast(_ s: String) { DispatchQueue.main.async { self.onToast?(s) } }
@@ -94,24 +143,31 @@ final class Emulator {
   }
 
   private func tick() {
+    if paused { return }
     rh_set_input(keyMask | padMask())
     rh_run()
+    framesRun += 1
     sramTick += 1
     if sramTick % 600 == 0 { _ = rh_sram_save(sramPath) }
     let serial = rh_video_serial()
     guard serial != lastSerial else { return }
     lastSerial = serial
-    var px: UnsafePointer<UInt8>?
-    var w: Int32 = 0, h: Int32 = 0
-    guard rh_video(&px, &w, &h) != 0, let p = px else { return }
-    let data = Data(bytes: p, count: Int(w * h * 4))
-    guard let prov = CGDataProvider(data: data as CFData),
-          let img = CGImage(width: Int(w), height: Int(h), bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: Int(w) * 4,
-                            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
-                            provider: prov, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return }
+    guard let img = currentImage() else { return }
     let aspect = rh_aspect()
     DispatchQueue.main.async { [weak self] in self?.onFrame?(img, aspect) }
+  }
+
+  /// 지금 화면(코어가 마지막으로 낸 영상)
+  private func currentImage() -> CGImage? {
+    var px: UnsafePointer<UInt8>?
+    var w: Int32 = 0, h: Int32 = 0
+    guard rh_video(&px, &w, &h) != 0, let p = px else { return nil }
+    let data = Data(bytes: p, count: Int(w * h * 4))
+    guard let prov = CGDataProvider(data: data as CFData) else { return nil }
+    return CGImage(width: Int(w), height: Int(h), bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: Int(w) * 4,
+                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                   bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                   provider: prov, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
   }
 
   /// 게임패드: 버튼 위치 기준으로 (아래=B, 오른쪽=A, 왼쪽=Y, 위=X)
@@ -171,4 +227,13 @@ final class Emulator {
     }
     return 1 << UInt32(id)
   }
+}
+
+struct SaveSlot: Identifiable {
+  let id: String
+  let date: Date?
+  let thumb: NSImage?
+  var isAuto: Bool { SaveSlot.isAutoId(id) }
+  static func isAutoId(_ id: String) -> Bool { id == "auto" }
+  static func name(_ id: String) -> String { id == "auto" ? "자동 저장" : "\(id)번 슬롯" }
 }
