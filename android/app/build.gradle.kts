@@ -27,7 +27,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // 디버그 빌드는 컴포즈가 느려서 폰에는 릴리스로 깐다
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
         }
     }

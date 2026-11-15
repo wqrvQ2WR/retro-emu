@@ -18,11 +18,16 @@ import java.util.concurrent.locks.LockSupport
 class Engine(private val ctx: Context) {
     @Volatile private var running = false
     @Volatile var paused = false
+    /** 앱이 뒤로 갔을 때(홈·잠금) */
+    @Volatile private var background = false
+    private val halted get() = paused || background
     private var emuThread: Thread? = null
     private var audioThread: Thread? = null
     private val tasks = ConcurrentLinkedQueue<() -> Unit>()
     private var mask = 0
     private val maskLock = Any()
+    /** 게임패드 입력(Gamepad 가 씀). 터치 입력과 합쳐서 넣는다. */
+    @Volatile var padMask = 0
 
     /** 화면 갱신 알림(Compose가 읽으면 다시 그림) */
     var frameTick by mutableIntStateOf(0)
@@ -97,6 +102,12 @@ class Engine(private val ctx: Context) {
         return true
     }
 
+    /** 뒤로 가면 멈추고 자동 저장. 뒤에서 시스템이 앱을 꺼도 진행이 남는다. */
+    fun setBackground(bg: Boolean) {
+        background = bg
+        if (bg && running) tasks.add { if (framesRun >= 300) { saveSlot("auto"); slotsVersion++ }; Native.sramSave(sramPath) }
+    }
+
     fun save(id: String) = tasks.add {
         show(if (saveSlot(id)) "${SaveSlot.name(id)}에 저장함" else "이 게임은 상태 저장을 못 해요")
         slotsVersion++
@@ -115,8 +126,8 @@ class Engine(private val ctx: Context) {
         var n = 0
         while (running) {
             while (true) { (tasks.poll() ?: break)() }
-            if (paused) { LockSupport.parkNanos(20_000_000); next = System.nanoTime(); continue }
-            Native.setInput(synchronized(maskLock) { mask })
+            if (halted) { LockSupport.parkNanos(20_000_000); next = System.nanoTime(); continue }
+            Native.setInput(synchronized(maskLock) { mask } or padMask)
             Native.run()
             framesRun++
             if (++n % 600 == 0) Native.sramSave(sramPath)
@@ -154,7 +165,7 @@ class Engine(private val ctx: Context) {
         val buf = ShortArray(512 * 2)
         track.play()
         while (running) {
-            if (paused) { track.pause(); while (paused && running) Thread.sleep(30); track.play(); continue }
+            if (halted) { track.pause(); while (halted && running) Thread.sleep(30); track.play(); continue }
             Native.audioRead(buf, 512)
             track.write(buf, 0, buf.size)
         }
