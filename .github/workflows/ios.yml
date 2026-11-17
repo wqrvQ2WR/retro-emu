@@ -15,6 +15,12 @@ jobs:
         run: ./fetch-cores.sh ios
       - name: 시뮬레이터용 빌드
         run: ./ios/build.sh sim
+      - name: 기기용 ipa
+        run: ./ios/build.sh device
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ipa
+          path: ios/dist/RetroEmu-ios.ipa
       - name: 시뮬레이터에서 띄워 보기
         run: |
           set -x
@@ -52,9 +58,3 @@ jobs:
         with:
           name: shots
           path: shots/
-      - name: 기기용 ipa
-        run: ./ios/build.sh device
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ipa
-          path: ios/dist/RetroEmu-ios.ipa

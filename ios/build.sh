@@ -56,8 +56,7 @@ if [ $KIND != catalyst ]; then
     echo '{"images":[{"filename":"icon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' > $T/Contents.json
     xcrun actool $OUT/xcassets/Assets.xcassets --compile $APP --platform $SDK --minimum-deployment-target 16.0 \
       --app-icon AppIcon --target-device iphone --target-device ipad --output-partial-info-plist $OUT/icon.plist >/dev/null
-    ICON_KEYS=$(sed -n '/<dict>/,/<\/dict>/p' $OUT/icon.plist | sed '1d;$d')
-    rm -rf $OUT/xcassets $OUT/icon.plist
+    rm -rf $OUT/xcassets
   else
     sips -z 120 120 ../assets/icon.png --out $APP/AppIcon60x60@2x.png >/dev/null
     sips -z 180 180 ../assets/icon.png --out $APP/AppIcon60x60@3x.png >/dev/null
@@ -92,6 +91,9 @@ cat > $PL <<P
 $ICON_KEYS
 </dict></plist>
 P
+# actool 이 만든 아이콘 키를 합친다(중첩 dict 라 PlistBuddy 로)
+if [ -f $OUT/icon.plist ]; then /usr/libexec/PlistBuddy -c "Merge $OUT/icon.plist" $PL >/dev/null; rm -f $OUT/icon.plist; fi
+plutil -lint $PL >/dev/null || { echo "Info.plist 깨짐"; exit 1; }
 
 # 임시 서명(사이드로딩 도구가 다시 서명한다). 코어 먼저, 앱 나중.
 for f in $FW/*.dylib; do codesign -fs - "$f" 2>/dev/null; done
