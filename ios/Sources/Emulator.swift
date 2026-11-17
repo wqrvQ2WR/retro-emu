@@ -28,6 +28,10 @@ final class Emulator {
   var onToast: ((String) -> Void)?
   /// 패드나 키보드로 메뉴를 부를 때(메인 스레드)
   var onMenu: (() -> Void)?
+  /// 게임패드 버튼이 처음 눌렸을 때(메인 스레드). 그때 터치 버튼을 숨긴다.
+  var onPadUsed: (() -> Void)?
+  private var padSeen = false
+  func resetPadSeen() { queue.async { self.padSeen = false } }
   private(set) var running = false
 
   static var coresDir: String { Bundle.main.privateFrameworksPath ?? "" }
@@ -167,7 +171,11 @@ final class Emulator {
   }
 
   private func tick() {
-    let (pad, menu) = padMask()
+    let (pad, fromPad, menu) = padMask()
+    if fromPad && !padSeen {
+      padSeen = true
+      DispatchQueue.main.async { self.onPadUsed?() }
+    }
     if menu && !menuHeld { DispatchQueue.main.async { self.onMenu?() } }
     menuHeld = menu
     if panelPaused || bgPaused { return }
@@ -198,8 +206,8 @@ final class Emulator {
   }
 
   /// 게임패드(버튼 위치 기준: 아래=B, 오른쪽=A, 왼쪽=Y, 위=X)와 블루투스 키보드(맥판과 같은 배치).
-  /// 두 번째 값은 메뉴를 부르는 조합(셀렉트+스타트, 홈 버튼, Esc)이 눌렸는지.
-  private func padMask() -> (UInt32, Bool) {
+  /// 두 번째 값은 패드 버튼이 눌렸는지, 세 번째 값은 메뉴를 부르는 조합(셀렉트+스타트, 홈 버튼, Esc)이 눌렸는지.
+  private func padMask() -> (UInt32, Bool, Bool) {
     var m: UInt32 = 0
     var menu = false
     func on(_ id: Int) { m |= 1 << UInt32(id) }
@@ -218,6 +226,7 @@ final class Emulator {
       if y < -0.5 { on(RH_DOWN) }
       if pad.buttonHome?.isPressed == true { menu = true }
     }
+    let fromPad = m != 0
     if let kb = GCKeyboard.coalesced?.keyboardInput {
       let keys: [(GCKeyCode, Int)] = [
         (.upArrow, RH_UP), (.downArrow, RH_DOWN), (.leftArrow, RH_LEFT), (.rightArrow, RH_RIGHT),
@@ -230,7 +239,7 @@ final class Emulator {
     }
     let ss: UInt32 = (1 << UInt32(RH_SELECT)) | (1 << UInt32(RH_START))
     if m & ss == ss { menu = true; m &= ~ss }
-    return (m, menu)
+    return (m, fromPad, menu)
   }
 
   private func startAudio() {

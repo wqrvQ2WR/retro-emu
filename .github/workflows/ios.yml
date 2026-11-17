@@ -52,7 +52,7 @@ jobs:
           rm -rf "$DATA/Documents/saves"
           xcrun simctl launch $UDID com.hayoonjae.retroemu --rom "$DATA/Documents/roms/test.nes" -bigButtons YES -joystick YES
           sleep 5; xcrun simctl io $UDID screenshot shots/4-game-big.png
-          xcrun simctl spawn $UDID log show --last 3m --predicate 'process == "RetroEmu"' --style compact | grep -iE "rhost|error|fault" | tail -30 || true
+          xcrun simctl spawn $UDID log show --last 3m --predicate 'process == "RetroEmu"' --style compact | grep -iE "rhost|\[pad\]|error" | tail -30 || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:

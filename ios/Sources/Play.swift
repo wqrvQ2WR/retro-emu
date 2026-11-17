@@ -273,7 +273,8 @@ struct PlayView: View {
   @State private var panel = false
   @State private var slots: [SaveSlot] = []
   @State private var canSave = true
-  @State private var padConnected = GCController.controllers().contains { $0.extendedGamepad != nil }
+  /// 패드로 실제로 누르기 시작하면 true(시뮬레이터의 가상 패드처럼 붙어만 있는 건 무시)
+  @State private var padConnected = false
   @AppStorage("bigButtons") private var big = false
   @AppStorage("joystick") private var stick = false
 
@@ -325,6 +326,7 @@ struct PlayView: View {
     .onAppear {
       emu.onToast = { show($0) }
       emu.onMenu = { setPanel(!panel) }
+      emu.onPadUsed = { if !padConnected { padConnected = true; show("게임패드로 하는 중") } }
       // 지난번에 나갈 때 자동 저장한 게 있으면 바로 고를 수 있게 목록부터 연다(게임은 멈춘 채로 시작)
       let openPanel = Emulator.hasAutoSave(rom: game.path) || CommandLine.arguments.contains("--panel")
       if let err = emu.start(rom: game.path, system: game.system, paused: openPanel) {
@@ -341,8 +343,16 @@ struct PlayView: View {
   }
 
   func updatePad() {
-    padConnected = GCController.controllers().contains { $0.extendedGamepad != nil }
-    show(padConnected ? "게임패드 연결됨" : "게임패드 끊김")
+    let any = PlayView.realPad()
+    if !any && padConnected { padConnected = false; emu.resetPadSeen(); show("게임패드 끊김") }
+    else if any { show("게임패드 연결됨") }
+  }
+
+  /// 진짜 게임패드가 붙어 있는지. 시뮬레이터 같은 가상 패드는 빼고, 무엇이 잡혔는지 로그로 남긴다.
+  static func realPad() -> Bool {
+    let pads = GCController.controllers().filter { $0.extendedGamepad != nil }
+    for c in pads { NSLog("[pad] \(c.vendorName ?? "-") / \(c.productCategory) snapshot=\(c.isSnapshot) attached=\(c.isAttachedToDevice)") }
+    return pads.contains { !$0.isSnapshot && !$0.productCategory.lowercased().contains("simulator") && !($0.vendorName ?? "").lowercased().contains("simulator") }
   }
 
   func setPanel(_ open: Bool) {
