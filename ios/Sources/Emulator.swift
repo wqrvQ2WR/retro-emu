@@ -329,9 +329,10 @@ import OpenGLES
 enum GLBridge {
   static var ctx: EAGLContext?
   static let provider = rh_gl_provider(
-    create: { gles, major, _ in
+    create: { gles, _, _ in
       guard gles != 0 else { return 0 }
-      GLBridge.ctx = (major >= 3 ? EAGLContext(api: .openGLES3) : nil) ?? EAGLContext(api: .openGLES2)
+      // GLES2 를 달라는 코어(PPSSPP)도 GLES3 컨텍스트에서 그대로 돈다. 3 이 안 되면 2.
+      GLBridge.ctx = EAGLContext(api: .openGLES3) ?? EAGLContext(api: .openGLES2)
       return GLBridge.ctx == nil ? 0 : 1
     },
     make_current: { on in EAGLContext.setCurrent(on != 0 ? GLBridge.ctx : nil) },

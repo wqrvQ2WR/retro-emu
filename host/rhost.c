@@ -54,6 +54,7 @@ typedef pthread_mutex_t mutex_t;
 #define GL_RENDERBUFFER 0x8D41
 #define GL_COLOR_ATTACHMENT0 0x8CE0
 #define GL_DEPTH_STENCIL_ATTACHMENT 0x821A
+#define GL_STENCIL_ATTACHMENT 0x8D20
 #define GL_DEPTH_ATTACHMENT 0x8D00
 #define GL_DEPTH24_STENCIL8 0x88F0
 #define GL_DEPTH_COMPONENT16 0x81A5
@@ -431,13 +432,18 @@ static int hw_setup(void) {
   if (g_fbo_w > cap) g_fbo_w = cap; if (g_fbo_h > cap) g_fbo_h = cap;
   GL.GenTextures(1, &g_fbo_tex); GL.BindTexture(GL_TEXTURE_2D, g_fbo_tex);
   GL.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST); GL.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  GL.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, g_fbo_w, g_fbo_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+  // GLES2 는 크기 붙은 형식(RGBA8)을 못 받는다. RGBA 는 GLES2·3 둘 다 된다.
+  GL.TexImage2D(GL_TEXTURE_2D, 0, gles ? GL_RGBA : GL_RGBA8, g_fbo_w, g_fbo_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
   GL.GenFramebuffers(1, &g_fbo); GL.BindFramebuffer(GL_FRAMEBUFFER, g_fbo);
   GL.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_fbo_tex, 0);
   if (g_hw.depth) {
     GL.GenRenderbuffers(1, &g_fbo_rb); GL.BindRenderbuffer(GL_RENDERBUFFER, g_fbo_rb);
     GL.RenderbufferStorage(GL_RENDERBUFFER, g_hw.stencil ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT16, g_fbo_w, g_fbo_h);
-    GL.FramebufferRenderbuffer(GL_FRAMEBUFFER, g_hw.stencil ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, g_fbo_rb);
+    if (g_hw.stencil && gles) {   // GLES2 엔 DEPTH_STENCIL_ATTACHMENT 가 없어서 깊이·스텐실에 따로 붙인다(GLES3 에서도 같은 뜻)
+      GL.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, g_fbo_rb);
+      GL.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, g_fbo_rb);
+    } else
+      GL.FramebufferRenderbuffer(GL_FRAMEBUFFER, g_hw.stencil ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, g_fbo_rb);
   }
   unsigned st = GL.CheckFramebufferStatus(GL_FRAMEBUFFER);
   if (st != GL_FRAMEBUFFER_COMPLETE) { set_err("FBO 를 못 만들었어요(%x)", st); g_glp.make_current(0); return 0; }
