@@ -1,6 +1,10 @@
 # retro-emu
 
-맥, 윈도우, 안드로이드에서 도는 고전 게임 에뮬레이터예요. 에뮬레이션은 [libretro](https://www.libretro.com/) 코어가 하고, 이 저장소는 그 코어를 불러서 화면, 소리, 입력, 저장을 맡는 작은 호스트와 세 앱을 담고 있어요.
+[English](README.en.md) · 한국어
+
+맥, 윈도우, 안드로이드, iOS에서 도는 고전 게임 에뮬레이터예요. 에뮬레이션은 [libretro](https://www.libretro.com/) 코어가 하고, 이 저장소는 그 코어를 불러서 화면, 소리, 입력, 저장을 맡는 작은 호스트와 네 앱을 담고 있어요.
+
+[릴리스](https://github.com/wqrvQ2WR/retro-emu/releases)에서 맥 dmg, 윈도우 zip, 안드로이드 apk를 받을 수 있어요.
 
 <p>
   <img src="docs/mac-library.png" width="62%" alt="맥 앱 게임 목록">
@@ -87,6 +91,20 @@
 - 게임 화면은 네이티브 코드가 SurfaceView에 바로 그려요. 픽셀은 정수배로 키워서 선명하고, 갤럭시 A32에서 60fps로 돌아요.
 - 세로, 가로 화면 둘 다 돼요.
 
+### iOS
+
+<p>
+  <img src="docs/ios-portrait.png" width="25%" alt="iOS 세로 화면">
+  <img src="docs/ios-landscape.png" width="62%" alt="iOS 가로 화면">
+</p>
+
+- 안드로이드판과 같은 화면이에요. 세로는 위에 게임, 아래에 버튼이고, 가로는 게임 위에 반투명 버튼이 겹쳐요.
+- **롬 추가**로 파일 앱에서 롬을 고르거나, 파일 앱의 **나의 iPhone > 레트로 에뮬** 폴더에 롬을 넣어요. zip도 풀어서 넣어요.
+- 메뉴에서 버튼 크기(기존/크게)와 방향키(십자키/조이스틱)를 바꿔요.
+- 게임패드(MFi, 엑스박스, 플스)와 블루투스 키보드를 쓸 수 있어요. 셀렉트+스타트, 홈 버튼, Esc로 메뉴를 열어요.
+- 홈 화면으로 나가거나 화면을 잠그면 멈추고 자동 저장해요.
+- 앱 스토어 앱이 아니라서 AltStore, Sideloadly 같은 사이드로딩 도구로 설치해야 해요. 지금은 맥 Catalyst로 화면을 점검한 단계이고, 실제 아이폰에서는 아직 시험하지 못했어요.
+
 ## 빌드
 
 먼저 코어를 받아요. libretro 공식 빌드봇에서 맥용과 안드로이드용(arm64)을 같이 받아요.
@@ -101,6 +119,12 @@ Swift 툴체인(Xcode 명령줄 도구)이 필요해요. `/Applications/RetroEmu
 
 ```bash
 ./mac/build-app.sh
+```
+
+배포용 dmg는 이렇게 만들어요. `mac/dist/RetroEmu-mac-arm64.dmg`가 나와요.
+
+```bash
+./mac/make-dmg.sh
 ```
 
 명령줄로 바로 열 수도 있어요.
@@ -144,6 +168,18 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 릴리스 빌드는 디버그 키로 서명돼요. 직접 배포하려면 `android/app/build.gradle.kts`의 서명 설정을 바꾸세요.
 
+### iOS
+
+Xcode 프로젝트 없이 `swiftc`로 바로 빌드해요. Xcode(iOS SDK)가 필요해요. 기기용은 서명 안 된 ipa가 나와서 사이드로딩 도구가 다시 서명해요.
+
+```bash
+./fetch-cores.sh ios
+./ios/build.sh device     # ios/dist/RetroEmu-ios.ipa
+./ios/build.sh sim        # arm64 시뮬레이터용 앱
+```
+
+Xcode가 없는 맥에서도 `./ios/build.sh catalyst`로 같은 UIKit 화면을 맥 앱으로 띄워 볼 수 있어요(코어는 맥용). `--rom 파일`, `--size 390x844`, `--shot 파일.png 초`로 화면을 자동으로 찍을 수 있어요. 깃허브 액션(`.github/workflows/ios.yml`)이 시뮬레이터에서 띄워 보고 ipa를 만들어요.
+
 ## 저장 파일 위치
 
 | | 위치 |
@@ -151,6 +187,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 | 맥 | `~/Library/Application Support/RetroEmu/` (`roms/`, `saves/`, `system/`) |
 | 윈도우 | `%APPDATA%\RetroEmu\` (`roms\`, `saves\`, `system\`) |
 | 안드로이드 | 앱 내부 저장소 `files/` (`roms/`, `saves/`, `system/`) |
+| iOS | 앱의 Documents (파일 앱에서 보임, `roms/`, `saves/`, `system/`) |
 
 `saves/` 안의 이름은 `<롬 파일 이름>.<슬롯>.state`(상태), `.png`(썸네일), `.srm`(배터리 세이브)이에요. 슬롯은 `auto`, `1`~`6`이에요.
 
@@ -160,6 +197,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 host/      공용 C 호스트(rhost). 코어를 dlopen 해서 영상(RGBA), 소리, 입력, 저장을 처리
 mac/       SwiftUI 앱 + build-app.sh
 windows/   SDL2 앱(main.c) + build.sh(zig 교차 컴파일). 맥에서도 빌드돼서 화면 점검에 쓴다
+ios/       SwiftUI + UIKit 앱 + build.sh(swiftc). 터치 버튼은 UIView 하나가 여러 손가락을 같이 처리
 android/   Jetpack Compose 앱 + JNI(ndk-build). jni.c 가 rhost 와 SurfaceView 출력을 잇는다
 assets/    앱 아이콘, 게임기 사진
 tests/     테스트용 패미컴 롬을 직접 만드는 스크립트(mk_nes.py)와 그 롬
