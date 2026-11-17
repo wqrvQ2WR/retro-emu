@@ -53,11 +53,30 @@ class Engine(private val ctx: Context) {
         mask = if (down) mask or (1 shl bit) else mask and (1 shl bit).inv()
     }
     fun releaseAll() = synchronized(maskLock) { mask = 0 }
+    fun setAnalog(stick: Int, x: Float, y: Float) = Native.setAnalog(stick, x, y)
+    fun setPointer(x: Float, y: Float, down: Boolean) = Native.setPointer(x, y, down)
+
+    /** PSP·게임큐브 코어 자료를 처음 한 번 앱 assets 에서 시스템 폴더로 복사한다 */
+    private fun installAssets(sys: GameSystem, sysDir: File) {
+        val name = sys.sysAssets ?: return
+        val dst = File(sysDir, name)
+        if (File(dst, ".done").exists()) return
+        fun copy(path: String, to: File) {
+            val kids = ctx.assets.list(path) ?: emptyArray()
+            if (kids.isEmpty()) {
+                to.parentFile?.mkdirs()
+                runCatching { ctx.assets.open(path).use { i -> to.outputStream().use { o -> i.copyTo(o) } } }
+            } else kids.forEach { copy("$path/$it", File(to, it)) }
+        }
+        copy("sysassets/$name", dst)
+        File(dst, ".done").writeText("ok")
+    }
 
     /** 실패하면 이유를 돌려준다. */
     fun start(rom: File, sys: GameSystem): String? {
         val core = File(ctx.applicationInfo.nativeLibraryDir, "lib${sys.coreLib}.so").path
         val sysDir = File(ctx.filesDir, "system").apply { mkdirs() }.path
+        installAssets(sys, File(sysDir))
         val saves = File(ctx.filesDir, "saves").apply { mkdirs() }.path
         if (!Native.open(core, sysDir, saves) || !Native.load(rom.path)) {
             val e = Native.error(); Native.close(); return e.ifEmpty { "열 수 없어요" }

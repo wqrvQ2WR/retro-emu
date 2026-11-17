@@ -7,6 +7,19 @@ import UIKit
 /// 코어 영상을 레이어 contents 로 바로 바꿔 끼운다(SwiftUI 상태를 안 거쳐서 빠름). 픽셀은 nearest 로 키운다.
 final class ScreenView: UIView {
   private let image = CALayer()
+  /// DS 아래 화면 터치(게임 그림 기준 0~1). 비어 있으면 터치를 안 받는다.
+  var onPointer: ((Double, Double, Bool) -> Void)? { didSet { isMultipleTouchEnabled = false } }
+  private func pointer(_ t: Set<UITouch>, _ down: Bool) {
+    guard let onPointer, let p = t.first?.location(in: self) else { return }
+    let f = image.frame
+    guard f.width > 0 else { return }
+    let x = (p.x - f.minX) / f.width, y = (p.y - f.minY) / f.height
+    onPointer(x, y, down && x >= 0 && x <= 1 && y >= 0 && y <= 1)
+  }
+  override func touchesBegan(_ t: Set<UITouch>, with e: UIEvent?) { pointer(t, true) }
+  override func touchesMoved(_ t: Set<UITouch>, with e: UIEvent?) { pointer(t, true) }
+  override func touchesEnded(_ t: Set<UITouch>, with e: UIEvent?) { pointer(t, false) }
+  override func touchesCancelled(_ t: Set<UITouch>, with e: UIEvent?) { pointer(t, false) }
   private var aspect: Double = 4.0 / 3.0
   /// 세로 화면에선 위에 붙인다
   var alignTop = false { didSet { setNeedsLayout() } }
@@ -42,8 +55,10 @@ final class ScreenView: UIView {
 struct ScreenRep: UIViewRepresentable {
   let emu: Emulator
   var alignTop = false
+  var touch = false
   func makeUIView(context: Context) -> ScreenView {
     let v = ScreenView()
+    if touch { v.onPointer = { x, y, d in emu.setPointer(x, y, d) } }
     emu.onFrame = { [weak v] img, a in v?.show(img, aspect: a) }
     return v
   }
@@ -67,6 +82,8 @@ final class ControlsView: UIView {
   /// 가로 화면이면 게임 화면 위에 반투명하게 겹친다
   var overlay = false { didSet { setNeedsLayout() } }
   var onMask: ((UInt32) -> Void)?
+  /// 아날로그 기종이면 왼쪽 패드를 아날로그 스틱으로(-1~1)
+  var onStick: ((CGPoint) -> Void)?
 
   private var buttons: [Button] = []
   private var padCenter = CGPoint.zero
@@ -115,7 +132,7 @@ final class ControlsView: UIView {
     let face = CGPoint(x: W - side, y: midY)
     if system.hasXY {
       let r = min(29 * u * k, padRadius * 0.42), d = r * 1.72
-      let ps1 = system == .ps1
+      let ps1 = system == .ps1 || system == .ps2 || system == .psp
       let set: [(Int, String, CGFloat, CGFloat)] = [
         (RH_X, ps1 ? "삼각" : "X", 0, -d), (RH_Y, ps1 ? "사각" : "Y", -d, 0),
         (RH_A, ps1 ? "동그" : "A", d, 0), (RH_B, ps1 ? "엑스" : "B", 0, d),
@@ -164,7 +181,14 @@ final class ControlsView: UIView {
   /// 지금 닿아 있는 손가락 전부로 비트마스크를 다시 만든다
   private func update(_ e: UIEvent?, ended: Set<UITouch> = []) {
     var m: UInt32 = 0
-    if let p = padPoint { m |= padBits(p) }
+    if system.hasAnalog {
+      var v = CGPoint.zero
+      if let p = padPoint {
+        let lim = padRadius * 0.8
+        v = CGPoint(x: max(-1, min(1, (p.x - padCenter.x) / lim)), y: max(-1, min(1, (p.y - padCenter.y) / lim)))
+      }
+      onStick?(v)
+    } else if let p = padPoint { m |= padBits(p) }
     for touch in e?.touches(for: self) ?? [] where !ended.contains(touch) && touch !== padTouch {
       let p = touch.location(in: self)
       for b in buttons where b.rect.insetBy(dx: -10, dy: -10).contains(p) { m |= 1 << UInt32(b.bit) }
@@ -174,7 +198,7 @@ final class ControlsView: UIView {
       held = m
       onMask?(m)
       setNeedsDisplay()
-    } else if stick {
+    } else if stick || system.hasAnalog {
       setNeedsDisplay()  // 조이스틱 손잡이 위치
     }
   }
@@ -213,7 +237,7 @@ final class ControlsView: UIView {
     let R = padRadius, pc = padCenter
     UIColor.white.withAlphaComponent(0.16 * dim).setFill()
     UIBezierPath(ovalIn: CGRect(x: pc.x - R, y: pc.y - R, width: R * 2, height: R * 2)).fill()
-    if stick {
+    if stick || system.hasAnalog {
       var kp = pc
       if let p = padPoint {
         let dx = p.x - pc.x, dy = p.y - pc.y, d = hypot(dx, dy), lim = R * 0.55
@@ -251,6 +275,7 @@ struct ControlsRep: UIViewRepresentable {
   func makeUIView(context: Context) -> ControlsView {
     let v = ControlsView()
     v.onMask = { emu.touchMask = $0 }
+    v.onStick = { emu.touchStick = $0 }
     return v
   }
   func updateUIView(_ v: ControlsView, context: Context) {
@@ -285,13 +310,14 @@ struct PlayView: View {
       ZStack(alignment: .top) {
         Color.black.ignoresSafeArea()
         if landscape || padConnected {
-          ScreenRep(emu: emu)
+          ScreenRep(emu: emu, touch: game.system.hasTouch)
           if !padConnected { ControlsRep(emu: emu, system: game.system, big: big, stick: stick, overlay: true) }
         } else {
           LinearGradient(colors: game.system.gradient, startPoint: .top, endPoint: .bottom).ignoresSafeArea()
           VStack(spacing: 0) {
-            ScreenRep(emu: emu, alignTop: true)
-              .frame(height: min(geo.size.width * 0.9, geo.size.height * 0.48))
+            ScreenRep(emu: emu, alignTop: true, touch: game.system.hasTouch)
+              // DS 는 위아래 두 화면이라 세로로 길다: 화면 몫을 더 준다
+              .frame(height: game.system == .nds ? min(geo.size.width * 1.5, geo.size.height * 0.6) : min(geo.size.width * 0.9, geo.size.height * 0.48))
             ControlsRep(emu: emu, system: game.system, big: big, stick: stick, overlay: false)
           }
         }

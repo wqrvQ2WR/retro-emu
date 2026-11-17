@@ -12,6 +12,8 @@ import android.view.MotionEvent
  */
 object Gamepad {
     @Volatile var engine: Engine? = null
+    /** 지금 게임이 아날로그 스틱 기종인지(게임 화면이 정해 줌) */
+    @Volatile var analog = false
     /** 셀렉트+스타트 같이 누르기, 또는 패드의 홈(모드) 버튼 */
     var onMenu: (() -> Unit)? = null
 
@@ -65,13 +67,19 @@ object Gamepad {
         if (e.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) return false
         val hx = e.getAxisValue(MotionEvent.AXIS_HAT_X); val hy = e.getAxisValue(MotionEvent.AXIS_HAT_Y)
         val x = e.getAxisValue(MotionEvent.AXIS_X); val y = e.getAxisValue(MotionEvent.AXIS_Y)
+        // 아날로그 기종(N64·게임큐브·PSP·PS2)은 스틱을 그대로 아날로그로, 오른쪽 스틱은 Z/RZ
+        val eng = engine
+        if (eng != null && analog) {
+            eng.setAnalog(0, x, y); eng.setAnalog(1, e.getAxisValue(MotionEvent.AXIS_Z), e.getAxisValue(MotionEvent.AXIS_RZ))
+        }
+        val sx = if (analog) 0f else x; val sy = if (analog) 0f else y
         val lt = maxOf(e.getAxisValue(MotionEvent.AXIS_LTRIGGER), e.getAxisValue(MotionEvent.AXIS_BRAKE))
         val rt = maxOf(e.getAxisValue(MotionEvent.AXIS_RTRIGGER), e.getAxisValue(MotionEvent.AXIS_GAS))
         var m = 0
-        if (hx < -0.5f || x < -0.5f) m = m or (1 shl Pad.LEFT)
-        if (hx > 0.5f || x > 0.5f) m = m or (1 shl Pad.RIGHT)
-        if (hy < -0.5f || y < -0.5f) m = m or (1 shl Pad.UP)
-        if (hy > 0.5f || y > 0.5f) m = m or (1 shl Pad.DOWN)
+        if (hx < -0.5f || sx < -0.5f) m = m or (1 shl Pad.LEFT)
+        if (hx > 0.5f || sx > 0.5f) m = m or (1 shl Pad.RIGHT)
+        if (hy < -0.5f || sy < -0.5f) m = m or (1 shl Pad.UP)
+        if (hy > 0.5f || sy > 0.5f) m = m or (1 shl Pad.DOWN)
         if (lt > 0.5f) m = m or (1 shl Pad.L2)
         if (rt > 0.5f) m = m or (1 shl Pad.R2)
         axes = m

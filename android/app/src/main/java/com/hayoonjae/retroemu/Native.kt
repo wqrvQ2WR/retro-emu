@@ -11,6 +11,8 @@ object Native {
     external fun error(): String
     external fun run()
     external fun setInput(mask: Int)
+    external fun setAnalog(stick: Int, x: Float, y: Float)
+    external fun setPointer(x: Float, y: Float, down: Boolean)
     external fun fps(): Double
     external fun sampleRate(): Double
     external fun aspect(): Double

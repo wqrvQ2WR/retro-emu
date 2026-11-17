@@ -66,7 +66,7 @@ enum GameSystem: String, CaseIterable, Codable, Identifiable {
   }
   private static var photoCache: [GameSystem: NSImage?] = [:]
   /// 세로로 긴 휴대용 기기
-  var tallPhoto: Bool { self == .gb || self == .gbc }
+  var tallPhoto: Bool { self == .gb || self == .gbc || self == .nds || self == .ps2 }
 
   var gradient: [Color] {
     switch self {

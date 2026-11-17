@@ -66,7 +66,7 @@ enum GameSystem: String, CaseIterable, Codable, Identifiable {
   }
   private static var photoCache: [GameSystem: UIImage?] = [:]
   /// 세로로 긴 휴대용 기기
-  var tallPhoto: Bool { self == .gb || self == .gbc }
+  var tallPhoto: Bool { self == .gb || self == .gbc || self == .nds || self == .ps2 }
 
   /// 터치 버튼: X/Y 가 있는 기종, 어깨 버튼(L/R), 트리거(L2/R2)
   var hasXY: Bool { self == .snes || self == .md || self == .ps1 || self == .nds || self == .gc || self == .psp || self == .ps2 || self == .n64 }

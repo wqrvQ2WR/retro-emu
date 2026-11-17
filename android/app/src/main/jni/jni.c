@@ -98,3 +98,6 @@ F(jboolean, present)(JNIEnv *e, jobject o, jint maxW, jint maxH) {
   pthread_mutex_unlock(&g_wmu);
   return 1;
 }
+
+F(void, setAnalog)(JNIEnv *e, jclass c, jint stick, jfloat x, jfloat y) { (void)e; (void)c; rh_set_analog(stick, x, y); }
+F(void, setPointer)(JNIEnv *e, jclass c, jfloat x, jfloat y, jboolean down) { (void)e; (void)c; rh_set_pointer(x, y, down); }

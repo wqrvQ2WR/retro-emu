@@ -26,6 +26,9 @@ final class Emulator {
 
   /// 터치 버튼 입력 비트마스크(메인 스레드에서 쓰고 큐에서 읽음)
   var touchMask: UInt32 = 0
+  /// 터치 스틱(아날로그 기종) 값: -1~1, 아래·오른쪽이 +
+  var touchStick = CGPoint.zero
+  private var system: GameSystem = .nes
   /// 새 영상이 나오면 호출(메인 스레드)
   var onFrame: ((CGImage, Double) -> Void)?
   var onToast: ((String) -> Void)?
@@ -61,6 +64,12 @@ final class Emulator {
       let saves = Emulator.supportDir.appendingPathComponent("saves").path
       try? FileManager.default.createDirectory(atPath: sys, withIntermediateDirectories: true)
       try? FileManager.default.createDirectory(atPath: saves, withIntermediateDirectories: true)
+      self.system = system
+      Emulator.installAssets(system, sysDir: sys)
+      #if !targetEnvironment(macCatalyst)
+      var gl = GLBridge.provider
+      rh_set_gl_provider(&gl)
+      #endif
       guard rh_open(core, sys, saves) != 0, rh_load(rom) != 0 else {
         err = String(cString: rh_error())
         rh_close()
@@ -200,6 +209,15 @@ final class Emulator {
     if menu && !menuHeld { DispatchQueue.main.async { self.onMenu?() } }
     menuHeld = menu
     if panelPaused || bgPaused { return }
+    // 아날로그: 터치 스틱, 게임패드 스틱 중 더 기운 쪽
+    var lx = Double(touchStick.x), ly = Double(touchStick.y), rx = 0.0, ry = 0.0
+    if let gp = GCController.controllers().first?.extendedGamepad {
+      let l = gp.leftThumbstick, r = gp.rightThumbstick
+      if abs(Double(l.xAxis.value)) + abs(Double(l.yAxis.value)) > abs(lx) + abs(ly) { lx = Double(l.xAxis.value); ly = -Double(l.yAxis.value) }
+      rx = Double(r.xAxis.value); ry = -Double(r.yAxis.value)
+    }
+    rh_set_analog(0, lx, ly)
+    rh_set_analog(1, rx, ry)
     rh_set_input(touchMask | pad)
     rh_run()
     framesRun += 1
@@ -240,7 +258,8 @@ final class Emulator {
       set(pad.buttonMenu, RH_START)
       if let o = pad.buttonOptions { set(o, RH_SELECT) }
       set(pad.dpad.up, RH_UP); set(pad.dpad.down, RH_DOWN); set(pad.dpad.left, RH_LEFT); set(pad.dpad.right, RH_RIGHT)
-      let x = pad.leftThumbstick.xAxis.value, y = pad.leftThumbstick.yAxis.value
+      let analog = system.hasAnalog
+      let x = analog ? 0 : pad.leftThumbstick.xAxis.value, y = analog ? 0 : pad.leftThumbstick.yAxis.value
       if x < -0.5 { on(RH_LEFT) }
       if x > 0.5 { on(RH_RIGHT) }
       if y > 0.5 { on(RH_UP) }
@@ -261,6 +280,18 @@ final class Emulator {
     let ss: UInt32 = (1 << UInt32(RH_SELECT)) | (1 << UInt32(RH_START))
     if m & ss == ss { menu = true; m &= ~ss }
     return (m, fromPad, menu)
+  }
+
+  /// DS 아래 화면 터치. x·y 는 게임 그림 기준 0~1
+  func setPointer(_ x: Double, _ y: Double, _ down: Bool) { queue.async { rh_set_pointer(x, y, down ? 1 : 0) } }
+
+  /// PSP·게임큐브 코어 자료를 처음 한 번 앱 번들(sysassets)에서 시스템 폴더로 복사한다
+  static func installAssets(_ system: GameSystem, sysDir: String) {
+    guard let name = system.sysAssets, let res = Bundle.main.resourcePath else { return }
+    let dst = sysDir + "/" + name, src = res + "/sysassets/" + name
+    let fm = FileManager.default
+    if fm.fileExists(atPath: dst) || !fm.fileExists(atPath: src) { return }
+    try? fm.copyItem(atPath: src, toPath: dst)
   }
 
   private func startAudio() {
@@ -290,3 +321,24 @@ struct SaveSlot: Identifiable {
   static func isAutoId(_ id: String) -> Bool { id == "auto" }
   static func name(_ id: String) -> String { id == "auto" ? "자동 저장" : "\(id)번 슬롯" }
 }
+
+#if !targetEnvironment(macCatalyst)
+import OpenGLES
+
+/// PSP·N64·게임큐브·PS2 코어용 OpenGL ES 컨텍스트(EAGL). rhost 가 코어를 부를 때마다 붙였다 뗀다.
+enum GLBridge {
+  static var ctx: EAGLContext?
+  static let provider = rh_gl_provider(
+    create: { gles, major, _ in
+      guard gles != 0 else { return 0 }
+      GLBridge.ctx = (major >= 3 ? EAGLContext(api: .openGLES3) : nil) ?? EAGLContext(api: .openGLES2)
+      return GLBridge.ctx == nil ? 0 : 1
+    },
+    make_current: { on in EAGLContext.setCurrent(on != 0 ? GLBridge.ctx : nil) },
+    get_proc: { name in
+      guard let name else { return nil }
+      return dlsym(UnsafeMutableRawPointer(bitPattern: -2), name)   // RTLD_DEFAULT
+    },
+    destroy: { EAGLContext.setCurrent(nil); GLBridge.ctx = nil })
+}
+#endif

@@ -1,5 +1,6 @@
 package com.hayoonjae.retroemu
 
+import android.annotation.SuppressLint
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -107,7 +108,7 @@ fun Root() {
 private fun listGames(ctx: android.content.Context): List<File> =
     romsDir(ctx).listFiles()?.filter { GameSystem.of(it) != null }?.sortedBy { it.name.lowercase() } ?: emptyList()
 
-private fun isRomName(n: String) = GameSystem.fromName(n) != null || n.endsWith(".bin", true)
+private fun isRomName(n: String) = GameSystem.fromName(n) != null || n.endsWith(".bin", true) || n.endsWith(".iso", true)
 
 /** 롬 가져오기. zip 은 풀어서 롬(.cue/.bin 포함)만 넣는다. 이름만 쓰므로 경로 탈출은 없다. */
 private fun copyIn(ctx: android.content.Context, uri: Uri) {
@@ -234,6 +235,7 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
     var padName by remember { mutableStateOf(Gamepad.connected(ctx)) }
     DisposableEffect(Unit) {
         Gamepad.engine = engine
+        Gamepad.analog = sys.hasAnalog
         Gamepad.onMenu = { if (slotsOpen) slotsOpen = false else menu = !menu }
         val im = ctx.getSystemService(android.hardware.input.InputManager::class.java)
         val l = object : android.hardware.input.InputManager.InputDeviceListener {
@@ -270,15 +272,15 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
     val landscape = LocalConfiguration.current.screenWidthDp > LocalConfiguration.current.screenHeightDp
     Box(Modifier.fillMaxSize().background(GameBg)) {
         if (padName != null) {
-            Box(Modifier.fillMaxSize().systemBarsPadding().padding(8.dp), contentAlignment = Alignment.Center) { Screen(engine) }
+            Box(Modifier.fillMaxSize().systemBarsPadding().padding(8.dp), contentAlignment = Alignment.Center) { Screen(engine, sys) }
         } else if (landscape) {
             Row(Modifier.fillMaxSize().systemBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.width((190 * k).dp).fillMaxHeight(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Shoulders(engine, sys, true, k); Spacer(Modifier.height(10.dp)); DirPad(engine, k, prefs.stick)
+                        Shoulders(engine, sys, true, k); Spacer(Modifier.height(10.dp)); DirPad(engine, sys, k, prefs.stick)
                     }
                 }
-                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) { Screen(engine) }
+                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) { Screen(engine, sys) }
                 Box(Modifier.width((190 * k).dp).fillMaxHeight(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Shoulders(engine, sys, false, k); Spacer(Modifier.height(10.dp)); Face(engine, sys, k)
@@ -288,14 +290,14 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
             }
         } else {
             Column(Modifier.fillMaxSize().systemBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) { Screen(engine) }
+                Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) { Screen(engine, sys) }
                 Spacer(Modifier.weight(1f))
                 Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Shoulders(engine, sys, true, k); Shoulders(engine, sys, false, k)
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically) {
-                    DirPad(engine, k, prefs.stick); Face(engine, sys, k)
+                    DirPad(engine, sys, k, prefs.stick); Face(engine, sys, k)
                 }
                 StartSelect(engine, k)
                 Spacer(Modifier.height(28.dp))
@@ -412,12 +414,25 @@ fun MenuItem(text: String, onClick: () -> Unit) {
     }
 }
 
+@SuppressLint("ClickableViewAccessibility")
 @Composable
-fun Screen(engine: Engine) {
+fun Screen(engine: Engine, sys: GameSystem) {
     // 에뮬 스레드가 이 서피스에 바로 그린다. 컴포즈는 자리만 잡아 준다.
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { c ->
             android.view.SurfaceView(c).apply {
+                // DS 아래 화면 터치: 네이티브가 정수배로 가운데에 그리므로 같은 자리로 계산한다
+                if (sys.hasTouch) setOnTouchListener { v, e ->
+                    val sz = Native.size()
+                    if (sz != null && v.width > 0) {
+                        val s = maxOf(1, minOf(v.width / sz[0], v.height / sz[1]))
+                        val w = sz[0] * s; val h = sz[1] * s
+                        val x = (e.x - (v.width - w) / 2f) / w; val y = (e.y - (v.height - h) / 2f) / h
+                        val down = e.actionMasked != android.view.MotionEvent.ACTION_UP && e.actionMasked != android.view.MotionEvent.ACTION_CANCEL
+                        engine.setPointer(x, y, down && x in 0f..1f && y in 0f..1f)
+                    }
+                    true
+                }
                 holder.addCallback(object : android.view.SurfaceHolder.Callback {
                     override fun surfaceCreated(h: android.view.SurfaceHolder) {}
                     override fun surfaceChanged(h: android.view.SurfaceHolder, f: Int, w: Int, hh: Int) = engine.setSurface(h.surface, w, hh)
@@ -477,7 +492,8 @@ private fun Engine.setDirs(m: Int) {
 }
 
 @Composable
-fun DirPad(engine: Engine, k: Float, stick: Boolean) = if (stick) Joystick(engine, k) else DPad(engine, k)
+fun DirPad(engine: Engine, sys: GameSystem, k: Float, stick: Boolean) =
+    if (sys.hasAnalog) Joystick(engine, k, analog = true) else if (stick) Joystick(engine, k) else DPad(engine, k)
 
 @Composable
 fun DPad(engine: Engine, k: Float) {
@@ -511,9 +527,9 @@ fun DPad(engine: Engine, k: Float) {
     }
 }
 
-/** 조이스틱: 손가락을 따라가는 손잡이. 방향은 8방향 디지털로 들어간다(고전 게임기는 방향키뿐이라). */
+/** 조이스틱: 손가락을 따라가는 손잡이. 고전 게임기는 8방향 디지털로, analog 면(N64·게임큐브·PSP·PS2) 아날로그 스틱으로 들어간다. */
 @Composable
-fun Joystick(engine: Engine, k: Float) {
+fun Joystick(engine: Engine, k: Float, analog: Boolean = false) {
     var knob by remember { mutableStateOf(Offset.Zero) }
     var dirs by remember { mutableStateOf(0) }
     val haptic = LocalHapticFeedback.current
@@ -530,6 +546,7 @@ fun Joystick(engine: Engine, k: Float) {
                     val len = d.getDistance()
                     if (len > maxR) d = d * (maxR / len)
                     knob = d
+                    if (analog) { engine.setAnalog(0, d.x / maxR, d.y / maxR); dirs = if (len > maxR * 0.2f) 1 else 0; return }
                     val m = dirsOf(d, maxR * 0.35f)
                     if (m != dirs) {
                         if (m != 0) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -541,7 +558,8 @@ fun Joystick(engine: Engine, k: Float) {
                     val e = awaitPointerEvent(PointerEventPass.Main)
                     e.changes.firstOrNull { it.id == first.id }?.let { apply(it.position) }
                 } while (e.changes.any { it.pressed && it.id == first.id })
-                knob = Offset.Zero; dirs = 0; engine.setDirs(0)
+                knob = Offset.Zero; dirs = 0
+                if (analog) engine.setAnalog(0, 0f, 0f) else engine.setDirs(0)
             }
         }, contentAlignment = Alignment.Center) {
         Box(Modifier.offset { IntOffset(knob.x.toInt(), knob.y.toInt()) }.size(dp(sz * 0.42f)).clip(CircleShape)
@@ -554,10 +572,10 @@ fun Face(engine: Engine, sys: GameSystem, k: Float) {
     Box(Modifier.size(dp(150 * k))) {
         if (sys.hasXY) {
             val b = 52 * k
-            Box(Modifier.align(Alignment.TopCenter)) { HoldButton(engine, Pad.X, if (sys == GameSystem.PS1) "삼각" else "X", b) }
-            Box(Modifier.align(Alignment.CenterStart)) { HoldButton(engine, Pad.Y, if (sys == GameSystem.PS1) "사각" else "Y", b) }
-            Box(Modifier.align(Alignment.CenterEnd)) { HoldButton(engine, Pad.A, if (sys == GameSystem.PS1) "동그" else "A", b) }
-            Box(Modifier.align(Alignment.BottomCenter)) { HoldButton(engine, Pad.B, if (sys == GameSystem.PS1) "엑스" else "B", b) }
+            Box(Modifier.align(Alignment.TopCenter)) { HoldButton(engine, Pad.X, sys.label(Pad.X) ?: "X", b) }
+            Box(Modifier.align(Alignment.CenterStart)) { HoldButton(engine, Pad.Y, sys.label(Pad.Y) ?: "Y", b) }
+            Box(Modifier.align(Alignment.CenterEnd)) { HoldButton(engine, Pad.A, sys.label(Pad.A) ?: "A", b) }
+            Box(Modifier.align(Alignment.BottomCenter)) { HoldButton(engine, Pad.B, sys.label(Pad.B) ?: "B", b) }
         } else {
             Box(Modifier.align(Alignment.CenterStart).offset(y = dp(20 * k))) { HoldButton(engine, Pad.B, "B", 62 * k) }
             Box(Modifier.align(Alignment.CenterEnd).offset(y = dp(-20 * k))) { HoldButton(engine, Pad.A, "A", 62 * k) }

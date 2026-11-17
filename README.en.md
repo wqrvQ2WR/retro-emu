@@ -22,6 +22,17 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 | SNES / Super Famicom | `.sfc` `.smc` `.swc` `.fig` | Snes9x |
 | Mega Drive / Genesis | `.md` `.gen` `.smd` `.bin` | Genesis Plus GX |
 | PlayStation | `.cue` `.chd` `.pbp` `.m3u` | PCSX ReARMed |
+| Nintendo 64 | `.n64` `.z64` `.v64` | Mupen64Plus-Next |
+| Nintendo DS | `.nds` | melonDS |
+| GameCube (and Wii) | `.iso` `.gcm` `.rvz` `.gcz` `.ciso` `.wbfs` | Dolphin |
+| PSP | `.iso` `.cso` `.pbp` | PPSSPP |
+| PlayStation 2 | `.iso` | Play! |
+
+- `.iso` files are identified by their contents: a GameCube/Wii disc marker means GameCube, an ISO system name of `PSP GAME` means PSP, anything else is PS2. `.pbp` is PS1 if it holds a PS1 game, otherwise PSP.
+- N64, GameCube, PSP and PS2 render with OpenGL. The host creates an offscreen GL context (CGL on macOS, SDL on Windows, EGL on Android, EAGL on iOS), hands it to the core, and reads each finished frame back so it shows up like every other system.
+- PSP and GameCube need support files (fonts, the `Sys` folder). The apps ship them and copy them to the system folder the first time.
+- These are heavy systems. GameCube and PS2 can be slow even on a computer depending on the game, and mostly slow on phones (especially iOS, which has no JIT). The PS2 core (Play!) still has low compatibility.
+- In this repository, homemade DS and PSP test programs (`tests/mk_nds.py`, `tests/mk_psp.py`) confirm the picture shows up. For N64, GameCube and PS2 only core loading and OpenGL setup were checked, not real games yet.
 
 - No ROMs are included. Bring your own.
 - PlayStation runs without a BIOS (HLE), so compatibility is limited. Put `scph5501.bin` in the system folder if you have one.
@@ -64,6 +75,8 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 - Drag ROM files onto the window or use **롬 추가** (Add ROM). Zip files are extracted.
 - Game controllers work as soon as they connect. Buttons are mapped by position, so every controller feels the same (bottom = B, right = A, left = Y, top = X).
 
+- On N64 and GameCube the arrow keys drive the left stick. Gamepad sticks go through as real analog on analog systems.
+
 | Key | Action |
 |---|---|
 | Arrow keys | D-pad |
@@ -73,6 +86,8 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 | E / R | L2 / R2 |
 | Return | Start |
 | Delete, Tab | Select |
+| I / J / K / L | Right stick (C buttons on N64) |
+| Mouse | DS touch screen |
 | F1 / F2 | Save / load (last chosen slot) |
 | F3 | Save list |
 | Esc | Close save list, quit game |

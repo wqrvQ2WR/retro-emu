@@ -133,6 +133,10 @@ typedef struct {
   SDL_Color c1, c2;
   int tall;      // 세로로 긴 휴대용
   int xy, shoulders;
+  int stick_first;   // 아날로그 스틱이 주된 조작(키보드 방향키를 왼쪽 스틱으로)
+  int analog;        // 아날로그 스틱이 있음(패드 스틱을 방향키로 안 바꿈)
+  int touch;         // 아래 화면 터치(마우스)
+  const char *assets;   // 처음 켤 때 시스템 폴더로 복사할 자료(sysassets/<이름>)
 } System;
 
 static const System SYS[] = {
@@ -142,10 +146,51 @@ static const System SYS[] = {
   {"gba", "게임보이 어드밴스", "mgba", {"gba"}, {102, 77, 255, 255}, {255, 77, 158, 255}, 0},
   {"snes", "슈퍼패미컴", "snes9x", {"sfc", "smc", "swc", "fig"}, {158, 92, 255, 255}, {255, 77, 158, 255}, 0},
   {"md", "메가드라이브", "genesis_plus_gx", {"md", "gen", "smd", "bin"}, {31, 140, 255, 255}, {51, 217, 230, 255}, 0},
-  {"ps1", "플레이스테이션", "pcsx_rearmed", {"cue", "chd", "pbp", "m3u"}, {255, 184, 26, 255}, {255, 97, 51, 255}, 0},
+  {"ps1", "플레이스테이션", "pcsx_rearmed", {"cue", "chd", "pbp", "m3u"}, {255, 184, 26, 255}, {255, 97, 51, 255}, 0, 0, 0, 0, 1},
+  {"n64", "닌텐도 64", "mupen64plus_next", {"n64", "z64", "v64"}, {38, 191, 89, 255}, {255, 204, 38, 255}, 0, 0, 0, 1, 1},
+  {"nds", "닌텐도 DS", "melonds", {"nds"}, {64, 179, 255, 255}, {158, 102, 255, 255}, 1, 0, 0, 0, 0, 1},
+  {"gc", "게임큐브", "dolphin", {"gcm", "rvz", "gcz", "ciso", "wbfs"}, {115, 77, 242, 255}, {64, 204, 217, 255}, 0, 0, 0, 1, 1, 0, "dolphin-emu"},
+  {"psp", "PSP", "ppsspp", {"cso"}, {51, 77, 230, 255}, {242, 77, 179, 255}, 0, 0, 0, 0, 1, 0, "PPSSPP"},
+  {"ps2", "플레이스테이션 2", "play", {NULL}, {38, 102, 255, 255}, {140, 64, 242, 255}, 1, 0, 0, 0, 1},
 };
+enum { SYS_PS1 = 6, SYS_GC = 9, SYS_PSP = 10, SYS_PS2 = 11 };
 #define NSYS (int)(sizeof SYS / sizeof *SYS)
 
+// 파일 일부만 읽기(디스크 이미지는 커서 다 읽지 않는다)
+static int read_at(const char *p, long long off, void *buf, int n) {
+#ifdef _WIN32
+  wchar_t *w = widen(p); FILE *f = _wfopen(w, L"rb"); free(w);
+  if (!f) return 0; _fseeki64(f, off, SEEK_SET);
+#else
+  FILE *f = fopen(p, "rb"); if (!f) return 0; fseeko(f, off, SEEK_SET);
+#endif
+  int got = (int)fread(buf, 1, n, f); fclose(f); return got;
+}
+// .iso: 게임큐브·위 표식 -> 게임큐브, ISO9660 시스템 이름 "PSP GAME" -> PSP, 그 밖 -> PS2 (맥·안드로이드와 같은 규칙)
+static int sniff_iso(const char *path) {
+  unsigned char h[0x20], v[40];
+  if (read_at(path, 0, h, 0x20) == 0x20) {
+    if ((h[0x1C] == 0xC2 && h[0x1D] == 0x33 && h[0x1E] == 0x9F && h[0x1F] == 0x3D) ||
+        (h[0x18] == 0x5D && h[0x19] == 0x1C && h[0x1A] == 0x9E && h[0x1B] == 0xA3)) return SYS_GC;
+  }
+  if (read_at(path, 0x8000, v, 40) == 40 && !memcmp(v + 1, "CD001", 5) && !memcmp(v + 8, "PSP GAME", 8)) return SYS_PSP;
+  return SYS_PS2;
+}
+// .pbp: DATA.PSAR 머리가 PSISOIMG/PSTITLEIMG 면 PS1 게임, 아니면 PSP
+static int sniff_pbp(const char *path) {
+  unsigned char h[0x28]; char tag[9] = {0};
+  if (read_at(path, 0, h, 0x28) != 0x28 || memcmp(h, "\0PBP", 4)) return SYS_PS1;
+  long long off = h[0x24] | h[0x25] << 8 | h[0x26] << 16 | (long long)h[0x27] << 24;
+  read_at(path, off, tag, 8);
+  return !strcmp(tag, "PSISOIMG") || !strncmp(tag, "PSTITLEI", 8) ? SYS_PS1 : SYS_PSP;
+}
+static int sys_of_name(const char *name);
+static int sys_of_path(const char *path) {
+  const char *e = ext_of(base_name(path));
+  if (!SDL_strcasecmp(e, "iso")) return sniff_iso(path);
+  if (!SDL_strcasecmp(e, "pbp")) return sniff_pbp(path);
+  return sys_of_name(base_name(path));
+}
 static int sys_of_name(const char *name) {
   const char *e = ext_of(name);
   for (int i = 0; i < NSYS; i++)
@@ -216,6 +261,8 @@ static double frame_acc;
 static Uint64 last_counter;
 static int frames_run;
 static uint32_t key_mask, pad_mask;
+static uint32_t rstick_keys;   // I/J/K/L(오른쪽 스틱): 위·아래·왼·오 비트 0~3
+static SDL_FRect game_rect;    // 게임 그림이 그려진 자리(마우스 터치 좌표 계산용)
 static SDL_AudioDeviceID audio;
 static SDL_GameController *pad;
 
@@ -364,7 +411,8 @@ static void load_library(void) {
   ngames = 0;
   int n; char **l = list_dir(roms_dir, &n);
   for (int i = 0; i < n && ngames < 512; i++) {
-    int s = sys_of_name(l[i]);
+    char full[2400]; snprintf(full, sizeof full, "%s/%s", roms_dir, l[i]);
+    int s = sys_of_path(full);
     if (s < 0) continue;
     if (!SDL_strcasecmp(ext_of(l[i]), "bin") && cue_refers(roms_dir, l[i])) continue;  // PS1 데이터
     Game *g = &games[ngames++];
@@ -378,7 +426,7 @@ static void load_library(void) {
 
 static int add_rom(const char *path) {
   const char *name = base_name(path);
-  int s = sys_of_name(name);
+  int s = sys_of_path(path);
   if (s < 0) return 0;
   char to[2300]; snprintf(to, sizeof to, "%s/%s", roms_dir, name);
   if (!copy_file(path, to)) return 0;
@@ -414,7 +462,7 @@ static void pick_files(void) {
   static wchar_t buf[32768]; buf[0] = 0;
   OPENFILENAMEW o = {0};
   o.lStructSize = sizeof o;
-  o.lpstrFilter = L"롬 파일\0*.nes;*.fds;*.unf;*.gb;*.gbc;*.gba;*.sfc;*.smc;*.swc;*.fig;*.md;*.gen;*.smd;*.bin;*.cue;*.chd;*.pbp;*.m3u\0모든 파일\0*.*\0";
+  o.lpstrFilter = L"롬 파일\0*.nes;*.fds;*.unf;*.gb;*.gbc;*.gba;*.sfc;*.smc;*.swc;*.fig;*.md;*.gen;*.smd;*.bin;*.cue;*.chd;*.pbp;*.m3u;*.n64;*.z64;*.v64;*.nds;*.iso;*.cso;*.gcm;*.rvz;*.gcz;*.ciso;*.wbfs\0모든 파일\0*.*\0";
   o.lpstrFile = buf; o.nMaxFile = 32768;
   o.Flags = OFN_ALLOWMULTISELECT | OFN_EXPLORER | OFN_FILEMUSTEXIST;
   if (!GetOpenFileNameW(&o)) return;
@@ -506,6 +554,64 @@ static void confirm_save(int s) { do_save(s); }
 
 static void sram_path(char *out) { sprintf(out, "%s.srm", cur_base); }
 
+// 폴더째 복사(PSP·게임큐브 코어 자료를 처음 한 번 시스템 폴더로)
+static void copy_tree(const char *from, const char *to) {
+  mkdir_u8(to);
+#ifdef _WIN32
+  char pat[2400]; snprintf(pat, sizeof pat, "%s/*", from);
+  wchar_t *w = widen(pat); WIN32_FIND_DATAW fd; HANDLE h = FindFirstFileW(w, &fd); free(w);
+  if (h == INVALID_HANDLE_VALUE) return;
+  do {
+    if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
+    char *nm = narrow(fd.cFileName), a[2400], b[2400];
+    snprintf(a, sizeof a, "%s/%s", from, nm); snprintf(b, sizeof b, "%s/%s", to, nm); free(nm);
+    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) copy_tree(a, b); else copy_file(a, b);
+  } while (FindNextFileW(h, &fd));
+  FindClose(h);
+#else
+  DIR *d = opendir(from); if (!d) return;
+  struct dirent *e;
+  while ((e = readdir(d))) {
+    if (e->d_name[0] == '.') continue;
+    char a[2400], b[2400]; snprintf(a, sizeof a, "%s/%s", from, e->d_name); snprintf(b, sizeof b, "%s/%s", to, e->d_name);
+    struct stat st; if (stat(a, &st)) continue;
+    if (S_ISDIR(st.st_mode)) copy_tree(a, b); else copy_file(a, b);
+  }
+  closedir(d);
+#endif
+}
+static void install_assets(const System *sy) {
+  if (!sy->assets) return;
+  char dst[2300], src[2300];
+  snprintf(dst, sizeof dst, "%s/%s", sys_dir, sy->assets); snprintf(src, sizeof src, "%ssysassets/%s", base_dir, sy->assets);
+  if (exists_u8(dst) || !exists_u8(src)) return;
+  copy_tree(src, dst);
+}
+
+// PSP·N64·게임큐브·PS2 코어용 OpenGL: 보이지 않는 SDL 창에 GL 컨텍스트를 만든다(같은 스레드에서만 씀)
+static SDL_Window *gl_win; static SDL_GLContext gl_ctx;
+static int sdl_gl_create(int gles, int major, int minor) {
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, gles ? SDL_GL_CONTEXT_PROFILE_ES : major >= 3 ? SDL_GL_CONTEXT_PROFILE_CORE : 0);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, major ? major : 2);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
+#ifdef __APPLE__
+  if (!gles && major >= 3) SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+#endif
+  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+  gl_win = SDL_CreateWindow("gl", 0, 0, 16, 16, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+  if (!gl_win) return 0;
+  gl_ctx = SDL_GL_CreateContext(gl_win);
+  if (!gl_ctx) { SDL_DestroyWindow(gl_win); gl_win = NULL; return 0; }
+  return 1;
+}
+static void sdl_gl_current(int on) { if (gl_win) SDL_GL_MakeCurrent(gl_win, on ? gl_ctx : NULL); }
+static void *sdl_gl_proc(const char *n) { return SDL_GL_GetProcAddress(n); }
+static void sdl_gl_destroy(void) {
+  if (gl_ctx) { SDL_GL_MakeCurrent(gl_win, NULL); SDL_GL_DeleteContext(gl_ctx); gl_ctx = NULL; }
+  if (gl_win) { SDL_DestroyWindow(gl_win); gl_win = NULL; }
+}
+static const rh_gl_provider sdl_gl = {sdl_gl_create, sdl_gl_current, sdl_gl_proc, sdl_gl_destroy};
+
 static void draw_bg(void);
 static float text(const char *s, float x, float y, float size, int bold, SDL_Color c, int align);
 static SDL_Color rgba(int r, int g, int b, int a);
@@ -520,6 +626,7 @@ static int start_game(Game *g) {
   }
   snprintf(core, sizeof core, "%s/%s_libretro" CORE_EXT, cores_dir, SYS[g->sys].core);
   snprintf(rom, sizeof rom, "%s/%s", roms_dir, g->name);
+  install_assets(&SYS[g->sys]);
   if (!rh_open(core, sys_dir, saves_dir) || !rh_load(rom)) {
     char m[600]; snprintf(m, sizeof m, "%s", rh_error()); rh_close();
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "열 수 없어요", m, win);
@@ -566,8 +673,25 @@ static void run_frames(void) {
   frame_acc += dt;
   double ft = 1.0 / rh_fps();
   if (frame_acc > ft * 4) frame_acc = ft * 4;   // 멈췄다 돌아오면 따라잡지 않음
+  // 아날로그: 스틱이 주된 기종은 방향키를 왼쪽 스틱으로, I/J/K/L 은 오른쪽 스틱. 패드 스틱이 더 기울었으면 그걸로.
+  const System *sy = &SYS[cur->sys];
+  uint32_t keys = key_mask;
+  double lx = 0, ly = 0, rx = 0, ry = 0;
+  if (sy->stick_first) {
+    if (keys & (1u << RH_LEFT)) lx -= 1; if (keys & (1u << RH_RIGHT)) lx += 1;
+    if (keys & (1u << RH_UP)) ly -= 1; if (keys & (1u << RH_DOWN)) ly += 1;
+    keys &= ~((1u << RH_LEFT) | (1u << RH_RIGHT) | (1u << RH_UP) | (1u << RH_DOWN));
+  }
+  if (rstick_keys & 1) ry -= 1; if (rstick_keys & 2) ry += 1; if (rstick_keys & 4) rx -= 1; if (rstick_keys & 8) rx += 1;
+  if (pad) {
+    double px = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0, py = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0;
+    double qx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTX) / 32767.0, qy = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0;
+    if (fabs(px) + fabs(py) > fabs(lx) + fabs(ly) && fabs(px) + fabs(py) > 0.25) { lx = px; ly = py; }
+    if (fabs(qx) + fabs(qy) > fabs(rx) + fabs(ry) && fabs(qx) + fabs(qy) > 0.25) { rx = qx; ry = qy; }
+  }
+  rh_set_analog(0, lx, ly); rh_set_analog(1, rx, ry);
   while (frame_acc >= ft) {
-    rh_set_input(key_mask | pad_mask);
+    rh_set_input(keys | pad_mask);
     rh_run(); frames_run++;
     if (frames_run % 600 == 0) { char s[2300]; sram_path(s); rh_sram_save(s); }
     frame_acc -= ft;
@@ -623,6 +747,7 @@ static void update_pad_axes(void) {
   m &= ~stick;
   int x = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX), y = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
   stick = 0;
+  if (cur && SYS[cur->sys].analog) x = y = 0;   // 아날로그 기종은 스틱을 스틱으로 보낸다
   if (x < -16000) stick |= 1u << RH_LEFT; if (x > 16000) stick |= 1u << RH_RIGHT;
   if (y < -16000) stick |= 1u << RH_UP; if (y > 16000) stick |= 1u << RH_DOWN;
   if (SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000) m |= 1u << RH_L2;
@@ -978,6 +1103,7 @@ static void draw_game(void) {
     double a = rh_aspect(); if (a <= 0) a = (double)game_w / game_h;
     float w = W, h = W / a; if (h > H) { h = H; w = H * a; }
     SDL_FRect d = {(W - w) / 2, (H - h) / 2, w, h};
+    game_rect = d;
     SDL_RenderCopyF(ren, game_tex, NULL, &d);
   }
   if (panel.open) draw_panel();
@@ -1051,6 +1177,7 @@ int main(int argc, char **argv) {
   join(sys_dir, sizeof sys_dir, data_dir, "system"); join(cores_dir, sizeof cores_dir, base_dir, "cores");
   mkdir_u8(roms_dir); mkdir_u8(saves_dir); mkdir_u8(sys_dir);
   sync_init(data_dir);
+  rh_set_gl_provider(&sdl_gl);
 
   char *start_rom = NULL; char *add_list[256]; int nadd = 0; const char *shot_size = NULL;
   for (int i = 1; i < argc; i++) {
@@ -1103,10 +1230,23 @@ int main(int argc, char **argv) {
       switch (e.type) {
       case SDL_QUIT: quit = 1; break;
       case SDL_DROPFILE: { char *p = e.drop.file; add_files(&p, 1); SDL_free(p); break; }
-      case SDL_MOUSEMOTION: mouse_x = e.motion.x * mscale; mouse_y = e.motion.y * mscale; break;
+      case SDL_MOUSEMOTION:
+        mouse_x = e.motion.x * mscale; mouse_y = e.motion.y * mscale;
+        if (screen == PLAY && cur && SYS[cur->sys].touch && (e.motion.state & SDL_BUTTON_LMASK) && !panel.open && game_rect.w > 0)
+          rh_set_pointer((mouse_x - game_rect.x) / game_rect.w, (mouse_y - game_rect.y) / game_rect.h, 1);
+        break;
+      case SDL_MOUSEBUTTONUP:
+        if (e.button.button == SDL_BUTTON_LEFT && screen == PLAY) rh_set_pointer(0, 0, 0);
+        break;
       case SDL_MOUSEBUTTONDOWN:
         mouse_x = e.button.x * mscale; mouse_y = e.button.y * mscale;
         if (e.button.button == SDL_BUTTON_LEFT) mouse_click = 1;
+        // DS 아래 화면: 게임 그림 위를 누르면 터치
+        if (e.button.button == SDL_BUTTON_LEFT && screen == PLAY && cur && SYS[cur->sys].touch && !panel.open && !confirm.open && game_rect.w > 0 &&
+            mouse_x >= game_rect.x && mouse_x < game_rect.x + game_rect.w && mouse_y >= game_rect.y && mouse_y < game_rect.y + game_rect.h) {
+          rh_set_pointer((mouse_x - game_rect.x) / game_rect.w, (mouse_y - game_rect.y) / game_rect.h, 1);
+          mouse_click = 0;
+        }
         if (e.button.button == SDL_BUTTON_RIGHT && screen == LIB && !confirm.open && !syncui.open) {
           lib_layout();
           for (int i = 0; i < ngames; i++) {
@@ -1158,6 +1298,8 @@ int main(int argc, char **argv) {
         }
         if (down && (k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)))) { toggle_fullscreen(); break; }
         if (screen == PLAY && !panel.open && !confirm.open) {
+          int rb = k == SDL_SCANCODE_I ? 1 : k == SDL_SCANCODE_K ? 2 : k == SDL_SCANCODE_J ? 4 : k == SDL_SCANCODE_L ? 8 : 0;
+          if (rb) { if (down) rstick_keys |= rb; else rstick_keys &= ~rb; break; }
           int bit = key_bit(k);
           if (bit >= 0) { if (down) key_mask |= 1u << bit; else key_mask &= ~(1u << bit); }
           if (down && !e.key.repeat) {

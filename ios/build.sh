@@ -17,7 +17,9 @@ case $KIND in
 esac
 SDKP=$(xcrun --sdk $SDK --show-sdk-path)
 EXTRA=()
+FW_LINK=(-framework OpenGLES)   # PSP·N64·게임큐브·PS2 코어의 GL 컨텍스트(EAGL)
 if [ $KIND = catalyst ]; then
+  FW_LINK=()
   EXTRA=(-Fsystem $SDKP/System/iOSSupport/System/Library/Frameworks -I $SDKP/System/iOSSupport/usr/include -L $SDKP/System/iOSSupport/usr/lib)
   APP=$OUT/RetroEmu.app; BIN=$APP/Contents/MacOS; RES=$APP/Contents/Resources; FW=$APP/Contents/Frameworks; PL=$APP/Contents/Info.plist
   mkdir -p $BIN $RES $FW
@@ -28,7 +30,7 @@ fi
 
 xcrun --sdk $SDK clang -target $TARGET -isysroot $SDKP -O2 -I../host/include -I../host -c ../host/rhost.c -o $OUT/rhost.o
 xcrun --sdk $SDK swiftc -target $TARGET -sdk $SDKP "${EXTRA[@]}" -O -parse-as-library \
-  -import-objc-header bridge.h Sources/*.swift ../mac/Sources/RetroEmu/Sync.swift ../mac/Sources/RetroEmu/SyncView.swift $OUT/rhost.o -o $BIN/RetroEmu
+  "${FW_LINK[@]}" -import-objc-header bridge.h Sources/*.swift ../mac/Sources/RetroEmu/Sync.swift ../mac/Sources/RetroEmu/SyncView.swift $OUT/rhost.o -o $BIN/RetroEmu
 rm -f $OUT/rhost.o
 
 # 코어
@@ -46,6 +48,7 @@ else
   done
 fi
 mkdir -p $RES/consoles; cp ../assets/consoles/*.png $RES/consoles/
+[ -d ../cores/sysassets ] && cp -R ../cores/sysassets $RES/   # PSP·게임큐브 코어 자료
 
 # 아이콘: actool(Xcode)이 있으면 에셋 카탈로그로, 없으면 png 그대로
 ICON_KEYS=""

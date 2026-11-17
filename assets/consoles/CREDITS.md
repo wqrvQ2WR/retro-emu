@@ -11,3 +11,8 @@
 | snes.png | File:Nintendo-Super-Famicom-Set-FL-transparent.png | Evan-Amos |
 | md.png | File:Sega-Mega-Drive-JP-Mk1-Console-Set.png | Evan-Amos |
 | ps1.png | File:PSX-Console-wController.png | Evan-Amos |
+| n64.png | File:N64-Console-Set.png | Evan-Amos |
+| nds.png | File:Nintendo-DS-Lite-Black-Open.png | Evan-Amos |
+| gc.png | File:GameCube-Set.jpg | Evan-Amos (흰 배경을 지움) |
+| psp.png | File:Sony-PSP-1000-Body.png | Evan-Amos |
+| ps2.png | File:PS2-Fat-Console-Set.png | Evan-Amos |

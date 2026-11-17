@@ -24,6 +24,8 @@ cp $SDL/bin/SDL2.dll $TTF/bin/SDL2_ttf.dll $OUT/
 cp ../cores/windows/*.dll $OUT/cores/
 cp $V/font/public/static/Pretendard-Bold.otf $V/font/public/static/Pretendard-ExtraBold.otf $OUT/fonts/
 cp ../assets/consoles/*.png $OUT/consoles/
+# PSP·게임큐브 코어 자료(처음 켤 때 %APPDATA%\\RetroEmu\\system 으로 복사됨)
+cp -R ../cores/sysassets $OUT/
 cp icon.png $OUT/
 mkdir -p $OUT/licenses
 cp $V/font/LICENSE.txt $OUT/licenses/Pretendard-OFL.txt

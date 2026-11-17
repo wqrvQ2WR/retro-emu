@@ -15,6 +15,8 @@ fetch_assets() {
   done
 }
 fetch_assets
+# 안드로이드 앱은 assets 로 들고 간다
+mkdir -p android/app/src/main/assets && rm -rf android/app/src/main/assets/sysassets && cp -R cores/sysassets android/app/src/main/assets/sysassets
 if [ "$1" = windows ]; then
   mkdir -p cores/windows
   for c in $CORES; do

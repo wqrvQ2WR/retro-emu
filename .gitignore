@@ -14,3 +14,4 @@ windows/*.res
 mac/dist/
 dist-release/
 ios/dist/
+android/app/src/main/assets/sysassets/
