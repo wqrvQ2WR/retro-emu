@@ -4,7 +4,7 @@ English · [한국어](README.md)
 
 A retro game emulator for macOS, Windows, Android and iOS. The emulation itself is done by [libretro](https://www.libretro.com/) cores. This repository holds a small host that loads a core and handles video, audio, input and saving, plus the four apps built on top of it.
 
-Download the macOS dmg, Windows zip and Android apk from [Releases](https://github.com/wqrvQ2WR/retro-emu/releases).
+Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](https://github.com/wqrvQ2WR/retro-emu/releases).
 
 <p>
   <img src="docs/mac-library.png" width="62%" alt="Game library on macOS">
@@ -104,7 +104,7 @@ Download the macOS dmg, Windows zip and Android apk from [Releases](https://gith
 - The menu has button size (normal / large) and d-pad style (cross / joystick).
 - Game controllers (MFi, Xbox, PlayStation) and Bluetooth keyboards work. Select+Start, the home button or Esc opens the menu.
 - Pauses and auto-saves when you go to the home screen or lock the phone.
-- It is not an App Store app, so install it with a sideloading tool such as AltStore or Sideloadly. So far the UI has been checked through Mac Catalyst only. It has not been tested on a real iPhone yet.
+- It is not an App Store app, so install it with a sideloading tool such as AltStore or Sideloadly. The UI and saving have been checked through Mac Catalyst and the iOS simulator. It has not been tested on a real iPhone yet.
 
 ## Building
 

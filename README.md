@@ -4,7 +4,7 @@
 
 맥, 윈도우, 안드로이드, iOS에서 도는 고전 게임 에뮬레이터예요. 에뮬레이션은 [libretro](https://www.libretro.com/) 코어가 하고, 이 저장소는 그 코어를 불러서 화면, 소리, 입력, 저장을 맡는 작은 호스트와 네 앱을 담고 있어요.
 
-[릴리스](https://github.com/wqrvQ2WR/retro-emu/releases)에서 맥 dmg, 윈도우 zip, 안드로이드 apk를 받을 수 있어요.
+[릴리스](https://github.com/wqrvQ2WR/retro-emu/releases)에서 맥 dmg, 윈도우 zip, 안드로이드 apk, iOS ipa를 받을 수 있어요.
 
 <p>
   <img src="docs/mac-library.png" width="62%" alt="맥 앱 게임 목록">
@@ -103,7 +103,7 @@
 - 메뉴에서 버튼 크기(기존/크게)와 방향키(십자키/조이스틱)를 바꿔요.
 - 게임패드(MFi, 엑스박스, 플스)와 블루투스 키보드를 쓸 수 있어요. 셀렉트+스타트, 홈 버튼, Esc로 메뉴를 열어요.
 - 홈 화면으로 나가거나 화면을 잠그면 멈추고 자동 저장해요.
-- 앱 스토어 앱이 아니라서 AltStore, Sideloadly 같은 사이드로딩 도구로 설치해야 해요. 지금은 맥 Catalyst로 화면을 점검한 단계이고, 실제 아이폰에서는 아직 시험하지 못했어요.
+- 앱 스토어 앱이 아니라서 AltStore, Sideloadly 같은 사이드로딩 도구로 설치해야 해요. 맥 Catalyst와 iOS 시뮬레이터에서 화면과 저장을 점검했고, 실제 아이폰에서는 아직 시험하지 못했어요.
 
 ## 빌드
 
