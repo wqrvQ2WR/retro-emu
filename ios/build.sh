@@ -28,7 +28,7 @@ fi
 
 xcrun --sdk $SDK clang -target $TARGET -isysroot $SDKP -O2 -I../host/include -I../host -c ../host/rhost.c -o $OUT/rhost.o
 xcrun --sdk $SDK swiftc -target $TARGET -sdk $SDKP "${EXTRA[@]}" -O -parse-as-library \
-  -import-objc-header bridge.h Sources/*.swift $OUT/rhost.o -o $BIN/RetroEmu
+  -import-objc-header bridge.h Sources/*.swift ../mac/Sources/RetroEmu/Sync.swift ../mac/Sources/RetroEmu/SyncView.swift $OUT/rhost.o -o $BIN/RetroEmu
 rm -f $OUT/rhost.o
 
 # 코어

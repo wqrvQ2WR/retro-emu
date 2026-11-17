@@ -273,6 +273,7 @@ struct PlayView: View {
   @State private var panel = false
   @State private var slots: [SaveSlot] = []
   @State private var canSave = true
+  @State private var syncing = false
   /// 패드로 실제로 누르기 시작하면 true(시뮬레이터의 가상 패드처럼 붙어만 있는 건 무시)
   @State private var padConnected = false
   @AppStorage("bigButtons") private var big = false
@@ -327,6 +328,38 @@ struct PlayView: View {
       emu.onToast = { show($0) }
       emu.onMenu = { setPanel(!panel) }
       emu.onPadUsed = { if !padConnected { padConnected = true; show("게임패드로 하는 중") } }
+      // 동기화를 켰으면 다른 기기 저장부터 받고 시작한다
+      guard Sync.enabled else { return begin() }
+      syncing = true
+      let rom = (game.path as NSString).lastPathComponent
+      DispatchQueue.global(qos: .userInitiated).async {
+        let r = Sync.syncGame(savesDir: Emulator.savesDir, romFile: rom, pull: true)
+        DispatchQueue.main.async {
+          syncing = false
+          guard model.playing?.path == game.path else { return }
+          begin()
+          if r == nil { show("동기화 서버에 못 닿아서 이 기기 저장으로 시작해요") }
+        }
+      }
+    }
+    .overlay { if syncing { syncOverlay } }
+    .onDisappear { emu.stop() }
+    .onChange(of: phase) { p in emu.setBackground(p != .active) }
+    .onReceive(NotificationCenter.default.publisher(for: .GCControllerDidConnect)) { _ in updatePad() }
+    .onReceive(NotificationCenter.default.publisher(for: .GCControllerDidDisconnect)) { _ in updatePad() }
+  }
+
+  var syncOverlay: some View {
+    ZStack {
+      Color.black.opacity(0.5).ignoresSafeArea()
+      VStack(spacing: 10) {
+        ProgressView().tint(.white).scaleEffect(1.4)
+        Text("다른 기기 저장을 받는 중").font(.system(size: 15, weight: .bold)).foregroundColor(.white)
+      }
+    }
+  }
+
+  func begin() {
       // 지난번에 나갈 때 자동 저장한 게 있으면 바로 고를 수 있게 목록부터 연다(게임은 멈춘 채로 시작)
       let openPanel = Emulator.hasAutoSave(rom: game.path) || CommandLine.arguments.contains("--panel")
       if let err = emu.start(rom: game.path, system: game.system, paused: openPanel) {
@@ -335,11 +368,6 @@ struct PlayView: View {
       } else if openPanel {
         setPanel(true)
       }
-    }
-    .onDisappear { emu.stop() }
-    .onChange(of: phase) { p in emu.setBackground(p != .active) }
-    .onReceive(NotificationCenter.default.publisher(for: .GCControllerDidConnect)) { _ in updatePad() }
-    .onReceive(NotificationCenter.default.publisher(for: .GCControllerDidDisconnect)) { _ in updatePad() }
   }
 
   func updatePad() {

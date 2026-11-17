@@ -8,6 +8,7 @@
 #include <time.h>
 #include <math.h>
 #include "rhost.h"
+#include "sync.h"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -315,7 +316,7 @@ static void text_accent(const char *s, float x, float y, float size) {
 }
 // 줄바꿈(최대 lines 줄, 넘치면 …)
 static float text_wrap(const char *s, float x, float y, float maxw, float size, int bold, SDL_Color c, int lines) {
-  char line[512]; const char *p = s; float lh = size * 1.25f * S;
+  char line[512]; const char *p = s; float lh = size * 1.25f * S; int drawn = 0;
   for (int ln = 0; ln < lines && *p; ln++) {
     int n = 0, last_space = -1, fit = 0;
     while (p[n]) {
@@ -335,8 +336,9 @@ static float text_wrap(const char *s, float x, float y, float maxw, float size, 
     } else { memcpy(line, p, fit); line[fit] = 0; }
     text(line, x, y + ln * lh, size, bold, c, 0);
     p += fit; while (*p == ' ') p++;
+    drawn = ln + 1;
   }
-  return lh;
+  return y + drawn * lh;   // 마지막 줄 아래 y
 }
 
 static SDL_Texture *load_png(const char *path, int *w, int *h) {
@@ -484,7 +486,7 @@ static void panel_open(int open) {
 static void slot_name(int s, char *out) { if (s) sprintf(out, "%d번 슬롯", s); else strcpy(out, "자동 저장"); }
 static void do_save(int s) {
   char m[128], nm[32]; slot_name(s, nm);
-  if (save_slot(s)) { if (s) quick_slot = s; snprintf(m, sizeof m, "%s에 저장함", nm); }
+  if (save_slot(s)) { if (s) quick_slot = s; snprintf(m, sizeof m, "%s에 저장함", nm); sync_push_async(saves_dir, cur->name); }
   else snprintf(m, sizeof m, "이 게임은 상태 저장을 못 해요");
   toast(m);
   if (panel.open) panel_refresh();
@@ -498,13 +500,24 @@ static void do_load(int s) {
 }
 static void delete_slot(int s) {
   char st[2300], pn[2300]; slot_paths(s, st, pn); remove_u8(st); remove_u8(pn); panel_refresh();
+  sync_deleted_async(cur->name, SLOTS[s]);
 }
 static void confirm_save(int s) { do_save(s); }
 
 static void sram_path(char *out) { sprintf(out, "%s.srm", cur_base); }
 
+static void draw_bg(void);
+static float text(const char *s, float x, float y, float size, int bold, SDL_Color c, int align);
+static SDL_Color rgba(int r, int g, int b, int a);
 static int start_game(Game *g) {
   char core[2300], rom[2300];
+  int sync_failed = 0;
+  if (sync_enabled()) {   // 다른 기기 저장부터 받는다(받는 동안 한 장 그려 둠)
+    draw_bg();
+    text("다른 기기 저장을 받는 중", W / 2, H / 2 - 10 * S, 17, 1, rgba(91, 51, 191, 255), 1);
+    SDL_RenderPresent(ren);
+    sync_failed = sync_game(saves_dir, g->name, 1) < 0;
+  }
   snprintf(core, sizeof core, "%s/%s_libretro" CORE_EXT, cores_dir, SYS[g->sys].core);
   snprintf(rom, sizeof rom, "%s/%s", roms_dir, g->name);
   if (!rh_open(core, sys_dir, saves_dir) || !rh_load(rom)) {
@@ -528,6 +541,7 @@ static int start_game(Game *g) {
   char st[2300]; slot_paths(0, st, NULL);
   if (exists_u8(st)) panel_open(1);   // 지난번 자동 저장이 있으면 목록부터
   else toast("Esc 나가기 · F1 저장 · F2 불러오기 · F3 저장 목록");
+  if (sync_failed) toast("동기화 서버에 못 닿아서 이 기기 저장으로 시작해요");
   return 1;
 }
 
@@ -537,6 +551,7 @@ static void stop_game(void) {
   if (frames_run >= 300) save_slot(0);   // 5초 넘게 했으면 자동 저장
   char s[2300]; sram_path(s); rh_sram_save(s);
   rh_close();
+  sync_push_async(saves_dir, cur->name);   // 다른 기기용으로 올리기(뒤에서)
   cur = NULL; panel.open = 0;
   if (game_tex) { SDL_DestroyTexture(game_tex); game_tex = NULL; }
   for (int i = 0; i < NSLOT; i++) if (panel.thumb[i]) { SDL_DestroyTexture(panel.thumb[i]); panel.thumb[i] = NULL; }
@@ -732,6 +747,14 @@ static void draw_library(void) {
   SDL_RenderFillRectsF(ren, pl, 2);
   TextEntry *te = text_tex("롬 추가", 0, (int)(14 * S + .5f));
   if (te) text("롬 추가", bx + 38 * S, by + (bh - te->h) / 2, 14, 0, rgba(255, 255, 255, 255), 0);
+  {  // 동기화 버튼(롬 추가 왼쪽)
+    const char *l = sync_enabled() ? "동기화 켜짐" : "동기화";
+    float sw = text_w(l, 14, 0) + 32 * S, sx = bx - 10 * S - sw;
+    SDL_Color wc = rgba(255, 255, 255, 220);
+    rrect(sx, by, sw, bh, bh / 2, wc, wc, 0);
+    TextEntry *t2 = text_tex(l, 0, (int)(14 * S + .5f));
+    if (t2) text(l, sx + sw / 2, by + (bh - t2->h) / 2, 14, 0, rgba(91, 51, 191, 255), 1);
+  }
 
   if (!ngames) {
     text("롬 파일을 끌어다 놓거나 롬 추가를 눌러요", W / 2, H / 2 - 20 * S, 17, 0, rgba(0, 0, 0, 180), 1);
@@ -840,6 +863,80 @@ static void draw_confirm(void) {
   mouse_click = 0;
 }
 
+// ---------------------------------------------------------------- 동기화 설정 창
+
+static struct { int open; char code[32]; char status[160]; } syncui;
+static void sync_open(int open) {
+  syncui.open = open;
+  if (open) { snprintf(syncui.code, sizeof syncui.code, "%s", sync_code()); syncui.status[0] = 0; SDL_StartTextInput(); }
+  else SDL_StopTextInput();
+}
+static void sync_type(const char *t) {   // 영문·숫자·- 만, 대문자로
+  for (; *t; t++) {
+    char c = *t; if (c >= 'a' && c <= 'z') c -= 32;
+    if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-')) continue;
+    size_t n = strlen(syncui.code); if (n + 1 < 20) { syncui.code[n] = c; syncui.code[n + 1] = 0; }
+  }
+}
+static void sync_now(void) {
+  snprintf(syncui.status, sizeof syncui.status, "서버와 맞추는 중");
+  if (!sync_check()) { snprintf(syncui.status, sizeof syncui.status, "동기화 서버에 못 닿았어요"); return; }
+  int total = 0, bad = 0;
+  for (int i = 0; i < ngames; i++) { int c = sync_game(saves_dir, games[i].name, 1); if (c < 0) bad = 1; else total += c; }
+  if (bad) snprintf(syncui.status, sizeof syncui.status, "동기화 서버에 못 닿았어요");
+  else if (!total) snprintf(syncui.status, sizeof syncui.status, "이미 맞춰져 있어요");
+  else snprintf(syncui.status, sizeof syncui.status, "파일 %d개를 주고받았어요", total);
+}
+static void sync_apply(void) {
+  if (strlen(syncui.code) < 4) return;
+  sync_set_code(syncui.code);
+  sync_now();
+}
+static void fmt_time(time_t t, char *out, size_t n);
+static void draw_sync(void) {
+  SDL_SetRenderDrawColor(ren, 0, 0, 0, 120); SDL_RenderFillRect(ren, NULL);
+  float w = fminf(W - 40 * S, 540 * S), h = 296 * S, x = (W - w) / 2, y = (H - h) / 2;
+  shadow(x, y, w, h, 22 * S, 90);
+  SDL_Color a = {255, 238, 247, 255}, b = {230, 244, 255, 255};
+  rrect(x, y, w, h, 22 * S, a, b, 2);
+  text_accent("기기 간 저장 동기화", x + 22 * S, y + 20 * S, 21);
+  if (btn("닫기", x + w - 22 * S - 76 * S, y + 18 * S, 76 * S, 32 * S, 1, 1) && mouse_click) { sync_open(0); mouse_click = 0; return; }
+  float ty = y + 62 * S;
+  ty = text_wrap("같은 코드를 넣은 기기끼리 슬롯 저장, 자동 저장, 게임 안 세이브를 주고받아요. 게임을 켤 때 받고, 저장하거나 나갈 때 올려요. 롬 파일 이름이 기기마다 같아야 해요.",
+                 x + 22 * S, ty, w - 44 * S, 13, 0, rgba(0, 0, 0, 165), 3);
+  ty += 12 * S;
+  text("동기화 코드", x + 22 * S, ty, 13, 1, rgba(0, 0, 0, 180), 0);
+  ty += 22 * S;
+  float fw = w - 44 * S - 98 * S, fh = 40 * S;
+  SDL_Color wc = rgba(255, 255, 255, 235);
+  rrect(x + 22 * S, ty, fw, fh, 10 * S, wc, wc, 0);
+  char shown[40]; snprintf(shown, sizeof shown, "%s%s", syncui.code, (SDL_GetTicks() / 500) % 2 ? "|" : " ");
+  if (syncui.code[0]) text(shown, x + 34 * S, ty + 9 * S, 18, 1, rgba(0, 0, 0, 220), 0);
+  else text("예: K7PM-2QXA", x + 34 * S, ty + 10 * S, 16, 0, rgba(0, 0, 0, 90), 0);
+  if (btn("새 코드", x + w - 22 * S - 88 * S, ty + 4 * S, 88 * S, 32 * S, 0, 1) && mouse_click) { char c[10]; sync_new_code(c); snprintf(syncui.code, sizeof syncui.code, "%s", c); mouse_click = 0; }
+  ty += fh + 8 * S;
+  ty = text_wrap("처음 쓰는 기기에서 새 코드를 만들고, 다른 기기엔 그 코드를 그대로 넣어요. 코드를 아는 사람은 저장을 볼 수 있으니 남한테 알려주지 마세요. Ctrl+V 로 붙여 넣을 수 있어요.",
+                 x + 22 * S, ty, w - 44 * S, 11, 0, rgba(0, 0, 0, 120), 2);
+  ty += 12 * S;
+  int same = sync_enabled() && !strcmp(sync_code(), syncui.code);
+  float bx = x + 22 * S, bh = 34 * S;
+  if (btn(same ? "저장됨" : "코드 저장", bx, ty, 104 * S, bh, 1, strlen(syncui.code) >= 4) && mouse_click) { mouse_click = 0; sync_apply(); }
+  bx += 112 * S;
+  if (btn("지금 맞추기", bx, ty, 112 * S, bh, 0, sync_enabled()) && mouse_click) { mouse_click = 0; sync_now(); }
+  bx += 120 * S;
+  if (sync_enabled() && btn("끄기", bx, ty, 70 * S, bh, 0, 1) && mouse_click) {
+    mouse_click = 0; sync_set_code(""); syncui.code[0] = 0; snprintf(syncui.status, sizeof syncui.status, "동기화를 껐어요");
+  }
+  ty += bh + 14 * S;
+  char st[200];
+  if (syncui.status[0]) snprintf(st, sizeof st, "%s", syncui.status);
+  else if (sync_last()) { char t[64]; fmt_time(sync_last(), t, sizeof t); snprintf(st, sizeof st, "마지막 동기화: %s", t); }
+  else snprintf(st, sizeof st, "아직 동기화한 적 없어요");
+  text(st, x + 22 * S, ty, 12, 1, rgba(0, 0, 0, 140), 0);
+  if (mouse_click && !hit(x, y, w, h)) sync_open(0);
+  mouse_click = 0;
+}
+
 static void draw_game(void) {
   SDL_SetRenderDrawColor(ren, 0, 0, 0, 255); SDL_RenderClear(ren);
   if (game_tex) {
@@ -880,6 +977,7 @@ static int script_step(int *quit) {
   if (!strncmp(cmd, "wait:", 5)) script_wait = atoi(cmd + 5);
   else if (!strncmp(cmd, "shot:", 5)) save_shot(cmd + 5);
   else if (!strcmp(cmd, "quit")) *quit = 1;
+  else if (!strncmp(cmd, "type:", 5)) { SDL_Event e = {0}; e.type = SDL_TEXTINPUT; snprintf(e.text.text, sizeof e.text.text, "%s", cmd + 5); SDL_PushEvent(&e); }
   else if (!strncmp(cmd, "key:", 4) || !strncmp(cmd, "down:", 5) || !strncmp(cmd, "up:", 3)) {
     int down = cmd[0] != 'u', up = cmd[0] != 'd';
     SDL_Scancode sc = SDL_GetScancodeFromName(strchr(cmd, ':') + 1);
@@ -917,6 +1015,7 @@ int main(int argc, char **argv) {
   join(roms_dir, sizeof roms_dir, data_dir, "roms"); join(saves_dir, sizeof saves_dir, data_dir, "saves");
   join(sys_dir, sizeof sys_dir, data_dir, "system"); join(cores_dir, sizeof cores_dir, base_dir, "cores");
   mkdir_u8(roms_dir); mkdir_u8(saves_dir); mkdir_u8(sys_dir);
+  sync_init(data_dir);
 
   char *start_rom = NULL; char *add_list[256]; int nadd = 0; const char *shot_size = NULL;
   for (int i = 1; i < argc; i++) {
@@ -973,7 +1072,7 @@ int main(int argc, char **argv) {
       case SDL_MOUSEBUTTONDOWN:
         mouse_x = e.button.x * mscale; mouse_y = e.button.y * mscale;
         if (e.button.button == SDL_BUTTON_LEFT) mouse_click = 1;
-        if (e.button.button == SDL_BUTTON_RIGHT && screen == LIB && !confirm.open) {
+        if (e.button.button == SDL_BUTTON_RIGHT && screen == LIB && !confirm.open && !syncui.open) {
           lib_layout();
           for (int i = 0; i < ngames; i++) {
             float x = lib_x0 + (i % lib_cols) * (card_w + gap), y = lib_y0 + (i / lib_cols) * (card_h + gap) - scroll_y;
@@ -1002,12 +1101,22 @@ int main(int argc, char **argv) {
           if (b == SDL_CONTROLLER_BUTTON_A) n = NAV_OK; if (b == SDL_CONTROLLER_BUTTON_B) n = NAV_BACK;
           if (b == SDL_CONTROLLER_BUTTON_X) n = NAV_ALT; if (b == SDL_CONTROLLER_BUTTON_Y) n = NAV_DEL;
           if (b == SDL_CONTROLLER_BUTTON_GUIDE && screen == PLAY) n = NAV_BACK;
-          if (n) nav(n);
+          if (n && !syncui.open) nav(n);
         }
         break;
       }
+      case SDL_TEXTINPUT: if (syncui.open) sync_type(e.text.text); break;
       case SDL_KEYDOWN: case SDL_KEYUP: {
         int down = e.type == SDL_KEYDOWN; SDL_Scancode k = e.key.keysym.scancode;
+        if (syncui.open) {
+          if (!down) break;
+          size_t n = strlen(syncui.code);
+          if (k == SDL_SCANCODE_ESCAPE) sync_open(0);
+          else if (k == SDL_SCANCODE_BACKSPACE && n) syncui.code[n - 1] = 0;
+          else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER) sync_apply();
+          else if (k == SDL_SCANCODE_V && (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI))) { char *c = SDL_GetClipboardText(); if (c) { sync_type(c); SDL_free(c); } }
+          break;
+        }
         if (down && (k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)))) { toggle_fullscreen(); break; }
         if (screen == PLAY && !panel.open && !confirm.open) {
           int bit = key_bit(k);
@@ -1040,7 +1149,7 @@ int main(int argc, char **argv) {
     // 메뉴 화면에서 패드 스틱으로도 움직이기(꾹 누르면 반복)
     if (pad) {
       update_pad_axes();
-      if (!(screen == PLAY && !panel.open && !confirm.open)) {
+      if (!(screen == PLAY && !panel.open && !confirm.open) && !syncui.open) {
         int x = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX), y = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
         int n = x < -20000 ? NAV_LEFT : x > 20000 ? NAV_RIGHT : y < -20000 ? NAV_UP : y > 20000 ? NAV_DOWN : NAV_NONE;
         Uint32 now = SDL_GetTicks();
@@ -1054,9 +1163,13 @@ int main(int argc, char **argv) {
     if (screen == LIB) {
       draw_library();
       // 왼쪽 클릭: 롬 추가 버튼 / 카드
-      if (mouse_click && !confirm.open) {
+      if (syncui.open) draw_sync();
+      if (mouse_click && !confirm.open && !syncui.open) {
         float bw = 112 * S, bh = 38 * S, bx = W - 28 * S - bw, by = 30 * S;
+        const char *l = sync_enabled() ? "동기화 켜짐" : "동기화";
+        float sw = text_w(l, 14, 0) + 32 * S, sx = bx - 10 * S - sw;
         if (hit(bx, by, bw, bh)) pick_files();
+        else if (hit(sx, by, sw, bh)) sync_open(1);
         else if (mouse_y >= lib_y0 - 8 * S)
           for (int i = 0; i < ngames; i++) {
             float x = lib_x0 + (i % lib_cols) * (card_w + gap), y = lib_y0 + (i / lib_cols) * (card_h + gap) - scroll_y;
@@ -1074,6 +1187,7 @@ int main(int argc, char **argv) {
     if (screen == PLAY && (SDL_GetWindowFlags(win) & SDL_WINDOW_MINIMIZED)) SDL_Delay(30);
   }
   stop_game();
+  sync_wait(8000);   // 나갈 때 올리던 저장이 끝날 때까지 조금 기다린다
   SDL_Quit();
   return 0;
 }

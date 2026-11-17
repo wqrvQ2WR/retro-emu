@@ -109,6 +109,10 @@ struct RetroEmuApp: App {
           let a = CommandLine.arguments
           if let i = a.firstIndex(of: "--add") { model.add(urls: a[(i + 1)...].prefix { !$0.hasPrefix("--") }.map { URL(fileURLWithPath: $0) }) }
           if let i = a.firstIndex(of: "--rom"), i + 1 < a.count { model.open(path: a[i + 1]) }
+          // --leave <초>: 그 뒤에 게임에서 나간다(나갈 때 자동 저장·동기화 점검용)
+          if let i = a.firstIndex(of: "--leave"), i + 1 < a.count, let t = Double(a[i + 1]) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + t) { model.playing = nil }
+          }
         }
         .onChange(of: phase) { p in if p == .active && model.playing == nil { model.rescan() } }
     }

@@ -26,6 +26,7 @@ struct ContentView: View {
 
 struct LibraryView: View {
   @EnvironmentObject var model: AppModel
+  @State private var showSync = false
   @State private var dropping = false
 
   var body: some View {
@@ -37,6 +38,13 @@ struct LibraryView: View {
             .font(.system(size: 30, weight: .heavy))
             .foregroundStyle(accent)
           Spacer()
+          Button { showSync = true } label: {
+            Label(Sync.enabled ? "동기화 켜짐" : "동기화", systemImage: "arrow.triangle.2.circlepath")
+              .font(.system(size: 14, weight: .bold))
+              .padding(.horizontal, 16).padding(.vertical, 9)
+              .background(Color.white.opacity(0.85), in: Capsule())
+              .foregroundColor(Color(red: 0.36, green: 0.2, blue: 0.75))
+          }.buttonStyle(.plain)
           Button(action: pick) {
             Label("롬 추가", systemImage: "plus")
               .font(.system(size: 14, weight: .bold))
@@ -60,6 +68,10 @@ struct LibraryView: View {
       }
       .padding(28)
       if dropping { RoundedRectangle(cornerRadius: 24).strokeBorder(accent, lineWidth: 4).padding(10).allowsHitTesting(false) }
+      if showSync {
+        Color.black.opacity(0.45).ignoresSafeArea().onTapGesture { showSync = false }
+        SyncView(roms: model.games.map { $0.path }) { showSync = false }
+      }
     }
     .onDrop(of: [.fileURL], isTargeted: $dropping) { providers in
       for p in providers {
@@ -169,6 +181,7 @@ struct PlayView: View {
   /// F1/F2 가 쓰는 슬롯
   @State private var quickSlot = "1"
   @State private var canSave = true
+  @State private var syncing = false
 
   var body: some View {
     ZStack(alignment: .top) {
@@ -200,6 +213,32 @@ struct PlayView: View {
     }
     .onAppear {
       emu.onToast = { show($0) }
+      // 동기화를 켰으면 다른 기기 저장부터 받고 시작한다
+      guard Sync.enabled else { return begin() }
+      syncing = true
+      let rom = (game.path as NSString).lastPathComponent
+      DispatchQueue.global(qos: .userInitiated).async {
+        let r = Sync.syncGame(savesDir: Emulator.savesDir, romFile: rom, pull: true)
+        DispatchQueue.main.async {
+          syncing = false
+          guard model.playing?.path == game.path else { return }  // 기다리는 동안 나감
+          begin()
+          if r == nil { show("동기화 서버에 못 닿아서 이 기기 저장으로 시작해요") }
+        }
+      }
+    }
+    .overlay { if syncing { syncOverlay } }
+    .onDisappear { emu.stop() }
+  }
+
+  var syncOverlay: some View {
+    VStack(spacing: 10) {
+      ProgressView().controlSize(.large)
+      Text("다른 기기 저장을 받는 중").font(.system(size: 15, weight: .bold)).foregroundColor(.white)
+    }
+  }
+
+  func begin() {
       if let err = emu.start(rom: game.path, system: game.system) {
         model.playing = nil
         model.error = err
@@ -209,8 +248,6 @@ struct PlayView: View {
       } else {
         show("Esc 나가기 · F1 저장 · F2 불러오기 · F3 저장 목록")
       }
-    }
-    .onDisappear { emu.stop() }
   }
 
   func setPanel(_ open: Bool) {

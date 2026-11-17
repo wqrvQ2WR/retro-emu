@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
+import kotlinx.coroutines.launch
 
 val Pink = Color(0xFFFF4D9D); val Violet = Color(0xFF9B5CFF); val Sky = Color(0xFF3DA9FF)
 val AccentBrush = Brush.horizontalGradient(listOf(Pink, Violet, Sky))
@@ -55,6 +57,9 @@ val GameBg = Brush.verticalGradient(listOf(Color(0xFF2B1B7A), Color(0xFF6A2C9E),
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 점검용: adb shell am start -n ... --es sync_code X --es sync_server http://127.0.0.1:8270/retro-sync
+        intent?.getStringExtra("sync_code")?.let { Sync.setCode(this, it) }
+        intent?.getStringExtra("sync_server")?.let { if (it.startsWith("http://127.0.0.1:") || it == "default") Sync.setServer(this, it.takeIf { s -> s != "default" }) }
         setContent { MaterialTheme(colorScheme = lightColorScheme(primary = Violet)) { Root() } }
     }
 
@@ -131,11 +136,20 @@ private fun copyIn(ctx: android.content.Context, uri: Uri) {
 @Composable
 fun Library(games: List<File>, onPlay: (File) -> Unit, onAdd: () -> Unit, onDelete: (File) -> Unit) {
     var del by remember { mutableStateOf<File?>(null) }
+    var syncOpen by remember { mutableStateOf(false) }
+    val ctx = LocalView.current.context
     Box(Modifier.fillMaxSize().background(LightBg).systemBarsPadding().padding(horizontal = 16.dp)) {
         Column {
             Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("레트로", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold,
                     style = androidx.compose.ui.text.TextStyle(brush = AccentBrush), modifier = Modifier.weight(1f))
+                Row(Modifier.clip(CircleShape).background(Color(0xD9FFFFFF)).combinedClickable(onClick = { syncOpen = true })
+                    .padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Refresh, null, tint = Violet, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (Sync.enabled(ctx)) "동기화 켜짐" else "동기화", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF5C33BF))
+                }
+                Spacer(Modifier.width(10.dp))
                 Box(Modifier.clip(CircleShape).background(AccentBrush).combinedClickable(onClick = onAdd).padding(12.dp)) {
                     Icon(Icons.Filled.Add, "롬 추가", tint = Color.White)
                 }
@@ -175,6 +189,7 @@ fun Library(games: List<File>, onPlay: (File) -> Unit, onAdd: () -> Unit, onDele
             }
         }
     }
+    if (syncOpen) SyncDialog(games) { syncOpen = false }
     del?.let { f ->
         AlertDialog(onDismissRequest = { del = null },
             confirmButton = { TextButton(onClick = { onDelete(f); del = null }) { Text("지우기") } },
@@ -195,7 +210,17 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
     val prefs = remember { ControlPrefs(ctx) }
     val k = if (prefs.big) BIG_SCALE else 1f
 
-    DisposableEffect(Unit) {
+    // 동기화를 켰으면 다른 기기 저장부터 받고 시작한다
+    var ready by remember { mutableStateOf(!Sync.enabled(ctx)) }
+    LaunchedEffect(Unit) {
+        if (!ready) {
+            val r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { Sync.syncGame(ctx, rom.name, true) }.getOrNull() }
+            if (r == null) engine.toast = "동기화 서버에 못 닿아서 이 기기 저장으로 시작해요"
+            ready = true
+        }
+    }
+    DisposableEffect(ready) {
+        if (!ready) return@DisposableEffect onDispose {}
         view.keepScreenOn = true
         val err = engine.start(rom, sys)
         if (err != null) onError(err) else {
@@ -231,7 +256,16 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
     LaunchedEffect(menu) { engine.paused = menu; if (menu) engine.releaseAll() }
     BackHandler { if (slotsOpen) slotsOpen = false else menu = !menu }
     LaunchedEffect(engine.toast) { if (engine.toast != null) { kotlinx.coroutines.delay(1800); engine.toast = null } }
-    if (!started) return
+    if (!started) {
+        if (!ready) Box(Modifier.fillMaxSize().background(GameBg), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Color.White)
+                Spacer(Modifier.height(12.dp))
+                Text("다른 기기 저장을 받는 중", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
+        }
+        return
+    }
 
     val landscape = LocalConfiguration.current.screenWidthDp > LocalConfiguration.current.screenHeightDp
     Box(Modifier.fillMaxSize().background(GameBg)) {
@@ -553,4 +587,60 @@ fun StartSelect(engine: Engine, k: Float) {
         HoldButton(engine, Pad.SELECT, "셀렉트", h, r, w, h)
         HoldButton(engine, Pad.START, "스타트", h, r, w, h)
     }
+}
+
+/** 동기화 설정. 같은 코드를 다른 기기에도 넣으면 저장을 주고받는다. */
+@Composable
+fun SyncDialog(games: List<File>, onClose: () -> Unit) {
+    val ctx = LocalView.current.context
+    var code by remember { mutableStateOf(Sync.code(ctx)) }
+    var status by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var on by remember { mutableStateOf(Sync.enabled(ctx)) }
+    val scope = rememberCoroutineScope()
+    fun lastText(): String {
+        val t = Sync.lastSync(ctx)
+        return if (t == 0L) "아직 동기화한 적 없어요"
+        else "마지막 동기화: " + java.text.SimpleDateFormat("M월 d일 a h:mm", java.util.Locale.KOREA).format(java.util.Date(t))
+    }
+    fun syncNow() {
+        busy = true; status = "서버와 맞추는 중"
+        scope.launch {
+            val (ok, n) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                var ok = Sync.check(ctx); var n = 0
+                if (ok) for (g in games) { val c = runCatching { Sync.syncGame(ctx, g.name, true) }.getOrNull(); if (c == null) ok = false else n += c }
+                ok to n
+            }
+            busy = false
+            status = if (!ok) "동기화 서버에 못 닿았어요" else if (n == 0) "이미 맞춰져 있어요" else "파일 ${n}개를 주고받았어요"
+        }
+    }
+    AlertDialog(onDismissRequest = onClose,
+        confirmButton = { TextButton(onClick = onClose) { Text("닫기") } },
+        title = { Text("기기 간 저장 동기화", fontWeight = FontWeight.ExtraBold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("같은 코드를 넣은 기기끼리 슬롯 저장, 자동 저장, 게임 안 세이브를 주고받아요. 게임을 켤 때 받고, 저장하거나 나갈 때 올려요. 롬 파일 이름이 기기마다 같아야 해요.",
+                    fontSize = 13.sp, color = Color(0xA6000000))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(code, { code = it }, label = { Text("동기화 코드") }, singleLine = true,
+                        placeholder = { Text("예: K7PM-2QXA") }, modifier = Modifier.weight(1f),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 17.sp))
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = { code = Sync.newCode() }) { Text("새 코드") }
+                }
+                Text("처음 쓰는 기기에서 새 코드를 만들고, 다른 기기엔 그 코드를 그대로 넣어요. 코드를 아는 사람은 저장을 볼 수 있으니 남한테 알려주지 마세요.",
+                    fontSize = 11.sp, color = Color(0x80000000))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { Sync.setCode(ctx, code); code = Sync.code(ctx); on = Sync.enabled(ctx); syncNow() },
+                        enabled = code.trim().length >= 4 && !busy) { Text("코드 저장") }
+                    if (on) OutlinedButton(onClick = { syncNow() }, enabled = !busy) { Text("지금 맞추기") }
+                }
+                if (on) TextButton(onClick = { Sync.setCode(ctx, ""); code = ""; on = false; status = "동기화를 껐어요" }) { Text("동기화 끄기") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (busy) { CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
+                    Text(status.ifEmpty { lastText() }, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0x8C000000))
+                }
+            }
+        })
 }

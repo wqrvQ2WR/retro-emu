@@ -1,0 +1,17 @@
+# /etc/systemd/system/retro-sync.service  — deploy.sh 가 복사해서 등록한다
+[Unit]
+Description=retro-emu 저장 동기화 서버
+After=network-online.target
+
+[Service]
+User=aaaa
+WorkingDirectory=/home/aaaa/retro-sync
+Environment=PORT=8270
+Environment=BASE_PATH=/retro-sync
+Environment=DATA=/home/aaaa/retro-sync-data
+ExecStart=/usr/bin/python3 server.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -15,8 +15,8 @@ rm -rf dist; mkdir -p $OUT/cores $OUT/fonts $OUT/consoles
 zig rc /fo build-icon.res app.rc
 zig cc -target x86_64-windows-gnu -O2 -std=gnu11 \
   -I$SDL/include/SDL2 -I$TTF/include/SDL2 -I../host/include -I../host -I$V/stb \
-  main.c ../host/rhost.c build-icon.res \
-  $SDL/lib/libSDL2main.a $SDL/lib/libSDL2.dll.a $TTF/lib/libSDL2_ttf.dll.a -lcomdlg32 \
+  main.c sync.c ../host/rhost.c build-icon.res \
+  $SDL/lib/libSDL2main.a $SDL/lib/libSDL2.dll.a $TTF/lib/libSDL2_ttf.dll.a -lcomdlg32 -lwinhttp \
   -Wl,--subsystem,windows -o $OUT/RetroEmu.exe
 rm -f build-icon.res $OUT/RetroEmu.pdb
 

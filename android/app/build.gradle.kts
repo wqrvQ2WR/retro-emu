@@ -63,4 +63,5 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
 
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")  // 단위 테스트에서 진짜 JSON 파서(안드로이드 것은 빈 껍데기)
 }

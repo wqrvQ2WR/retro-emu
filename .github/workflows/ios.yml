@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main, ios-ci]
-    paths: ["ios/**", "host/**", ".github/workflows/ios.yml"]
+    paths: ["ios/**", "host/**", "mac/Sources/RetroEmu/Sync*.swift", ".github/workflows/ios.yml"]
 
 jobs:
   build:

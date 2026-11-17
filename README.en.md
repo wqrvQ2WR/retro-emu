@@ -44,6 +44,16 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 - Save files are written to a temporary file and then swapped in, so a crash mid-save keeps the old save.
 - Saving is disabled until the game has actually run, so you can't overwrite a slot with a blank boot state from the save list that opens on launch.
 
+### Syncing saves between devices
+
+- Enter the same **sync code** on macOS, Windows, Android and iOS and they share saves. Turn it on with the **동기화** (Sync) button above the game list.
+- Make a **new code** on the first device, then type that same code on the others.
+- When a game starts, newer saves from other devices are downloaded. Saving to a slot, leaving the game or sending the app to the background uploads. Quit on your phone and continue from the auto-save on your Mac.
+- Slot saves, the auto-save, thumbnails and battery saves (.srm) are synced. For each file the newest one wins, and deleted slots are deleted on other devices too.
+- ROMs are matched by file name, so use the same ROM file names on every device.
+- If the server can't be reached, the game starts with the local saves and syncs next time.
+- Anyone who knows the code can get those saves. The server never sees the code itself, only a hash of it.
+
 ### macOS
 
 <img src="docs/mac-game.png" width="62%" alt="Playing on macOS">
@@ -169,6 +179,16 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 The release build is signed with the debug key. Change the signing config in `android/app/build.gradle.kts` to distribute it yourself.
 
+### Sync server
+
+Just `sync-server/server.py` (Python standard library only). The default address built into the apps is the author's Raspberry Pi. To run your own, start it like this and change the default address in the apps (`Sync.swift`, `Sync.kt`, `windows/sync.h`).
+
+```bash
+PORT=8270 DATA=~/retro-sync-data python3 sync-server/server.py
+```
+
+For testing, the macOS, iOS and Windows builds take `RETROEMU_SYNC=http://127.0.0.1:8270/retro-sync` to point at another server. The Android unit test (`SyncTest`) runs a real two-device exchange when this server is up.
+
 ### iOS
 
 Built directly with `swiftc`, no Xcode project. Needs Xcode (the iOS SDK). The device build is an unsigned ipa that sideloading tools re-sign.
@@ -200,6 +220,7 @@ mac/       SwiftUI app + build-app.sh, make-dmg.sh
 windows/   SDL2 app (main.c) + build.sh (zig cross-compile). Also builds on macOS for UI checks
 ios/       SwiftUI + UIKit app + build.sh (swiftc). One UIView handles all touch buttons, multi-touch included
 android/   Jetpack Compose app + JNI (ndk-build). jni.c connects rhost to SurfaceView output
+sync-server/ Save sync server (server.py, Pi deploy.sh)
 assets/    App icon, console photos
 tests/     Script that generates a test NES ROM (mk_nes.py) and the ROM itself
 docs/      README screenshots

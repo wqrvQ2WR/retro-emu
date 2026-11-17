@@ -43,6 +43,16 @@
 - 배터리 세이브(게임 안의 세이브)도 따로 저장돼요. 10초마다, 그리고 나갈 때 써요.
 - 저장 파일은 다 쓴 다음에 바꿔치기해서, 저장하다 꺼져도 예전 저장은 남아요.
 
+### 기기 간 저장 동기화
+
+- 맥, 윈도우, 안드로이드, iOS 어디서든 같은 **동기화 코드**를 넣으면 저장을 주고받아요. 게임 목록 위 **동기화** 버튼에서 켜요.
+- 처음 기기에서 **새 코드**를 만들고, 다른 기기엔 그 코드를 그대로 넣어요.
+- 게임을 켤 때 다른 기기의 새 저장을 받고, 슬롯에 저장하거나 나가거나 앱이 뒤로 갈 때 올려요. 그래서 폰에서 하다 나가면 맥에서 자동 저장부터 이어서 할 수 있어요.
+- 슬롯 저장, 자동 저장, 썸네일, 게임 안 세이브(.srm)가 오가요. 파일마다 더 나중에 저장한 쪽이 이기고, 지운 슬롯은 다른 기기에서도 지워져요.
+- 롬은 파일 이름으로 맞춰요. 기기마다 롬 파일 이름이 같아야 해요.
+- 서버에 못 닿으면 그 기기 저장으로 그냥 시작하고, 다음에 닿을 때 맞춰요.
+- 코드를 아는 사람은 그 저장을 받을 수 있어요. 서버는 코드 자체는 모르고, 코드로 만든 해시만 봐요.
+
 ### 맥
 
 <img src="docs/mac-game.png" width="62%" alt="맥에서 게임 하는 화면">
@@ -168,6 +178,16 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 릴리스 빌드는 디버그 키로 서명돼요. 직접 배포하려면 `android/app/build.gradle.kts`의 서명 설정을 바꾸세요.
 
+### 동기화 서버
+
+`sync-server/server.py` 하나로 돌아요(파이썬 표준 라이브러리만). 앱에 들어 있는 기본 주소는 만든 사람의 라즈베리파이예요. 직접 띄우려면 이렇게 하고, 앱 쪽 기본 주소(`Sync.swift`, `Sync.kt`, `windows/sync.h`)를 바꾸세요.
+
+```bash
+PORT=8270 DATA=~/retro-sync-data python3 sync-server/server.py
+```
+
+점검할 땐 맥·iOS·윈도우판은 `RETROEMU_SYNC=http://127.0.0.1:8270/retro-sync` 환경변수로 서버를 바꿀 수 있어요. 안드로이드 단위 테스트(`SyncTest`)는 이 서버를 띄워 두면 두 기기 주고받기를 실제로 해 봐요.
+
 ### iOS
 
 Xcode 프로젝트 없이 `swiftc`로 바로 빌드해요. Xcode(iOS SDK)가 필요해요. 기기용은 서명 안 된 ipa가 나와서 사이드로딩 도구가 다시 서명해요.
@@ -199,6 +219,7 @@ mac/       SwiftUI 앱 + build-app.sh
 windows/   SDL2 앱(main.c) + build.sh(zig 교차 컴파일). 맥에서도 빌드돼서 화면 점검에 쓴다
 ios/       SwiftUI + UIKit 앱 + build.sh(swiftc). 터치 버튼은 UIView 하나가 여러 손가락을 같이 처리
 android/   Jetpack Compose 앱 + JNI(ndk-build). jni.c 가 rhost 와 SurfaceView 출력을 잇는다
+sync-server/ 저장 동기화 서버(server.py, 파이 배포 deploy.sh)
 assets/    앱 아이콘, 게임기 사진
 tests/     테스트용 패미컴 롬을 직접 만드는 스크립트(mk_nes.py)와 그 롬
 docs/      README 스크린샷

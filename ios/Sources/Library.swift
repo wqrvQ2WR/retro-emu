@@ -10,6 +10,7 @@ let accent = LinearGradient(
 
 struct LibraryView: View {
   @EnvironmentObject var model: AppModel
+  @State private var showSync = false
   @State private var picking = false
   @State private var removing: Game?
 
@@ -23,6 +24,13 @@ struct LibraryView: View {
             .foregroundStyle(accent)
             .lineLimit(1).minimumScaleFactor(0.7)
           Spacer()
+          Button { showSync = true } label: {
+            Label(Sync.enabled ? "동기화 켜짐" : "동기화", systemImage: "arrow.triangle.2.circlepath")
+              .font(.system(size: 14, weight: .bold))
+              .padding(.horizontal, 14).padding(.vertical, 9)
+              .background(Color.white.opacity(0.85), in: Capsule())
+              .foregroundColor(Color(red: 0.36, green: 0.2, blue: 0.75))
+          }.buttonStyle(.plain)
           Button { picking = true } label: {
             Label("롬 추가", systemImage: "plus")
               .font(.system(size: 14, weight: .bold))
@@ -46,6 +54,10 @@ struct LibraryView: View {
         }
       }
       .padding(.horizontal, 18).padding(.top, 12)
+      if showSync {
+        Color.black.opacity(0.45).ignoresSafeArea().onTapGesture { showSync = false }
+        SyncView(roms: model.games.map { $0.path }) { showSync = false }
+      }
     }
     .fileImporter(isPresented: $picking, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
       if case .success(let urls) = r { model.add(urls: urls) }

@@ -42,6 +42,8 @@ class Engine(private val ctx: Context) {
     private var sramPath = ""
     /** saves/<롬 이름>. 슬롯 파일은 .<슬롯>.state / .<슬롯>.png */
     private var base = ""
+    /** 롬 파일 이름(동기화 기준) */
+    private var romFile = ""
     /** 이번에 켜고 나서 돈 프레임 수. 거의 안 했으면 나갈 때 자동 저장을 덮어쓰지 않는다. */
     @Volatile private var framesRun = 0
     /** 저장 목록이 바뀌면 올라간다(Compose 가 다시 읽게) */
@@ -62,6 +64,7 @@ class Engine(private val ctx: Context) {
         }
         sramPath = "$saves/${rom.name}.srm"
         base = "$saves/${rom.name}"
+        romFile = rom.name
         // 예전 한 칸짜리 저장은 1번 슬롯으로 옮긴다
         File("$base.state").let { if (it.exists() && !stateFile("1").exists()) it.renameTo(stateFile("1")) }
         framesRun = 0
@@ -80,6 +83,7 @@ class Engine(private val ctx: Context) {
         if (framesRun >= 300) saveSlot("auto")  // 나갈 때 자동 저장(5초 넘게 했을 때만)
         Native.sramSave(sramPath)
         Native.close()
+        Sync.pushLater(ctx, romFile)
     }
 
     private fun stateFile(id: String) = File("$base.$id.state")
@@ -109,7 +113,11 @@ class Engine(private val ctx: Context) {
     /** 뒤로 가면 멈추고 자동 저장. 뒤에서 시스템이 앱을 꺼도 진행이 남는다. */
     fun setBackground(bg: Boolean) {
         background = bg
-        if (bg && running) tasks.add { if (framesRun >= 300) { saveSlot("auto"); slotsVersion++ }; Native.sramSave(sramPath) }
+        if (bg && running) tasks.add {
+            if (framesRun >= 300) { saveSlot("auto"); slotsVersion++ }
+            Native.sramSave(sramPath)
+            Sync.pushLater(ctx, romFile)
+        }
     }
 
     /** 켜고 나서 한 프레임이라도 돌았는지(켜자마자 뜬 목록에서 빈 상태로 덮어쓰기 방지) */
@@ -117,14 +125,19 @@ class Engine(private val ctx: Context) {
 
     fun save(id: String) = tasks.add {
         if (framesRun == 0) { show("게임을 시작한 뒤에 저장할 수 있어요"); return@add }
-        show(if (saveSlot(id)) "${SaveSlot.name(id)}에 저장함" else "이 게임은 상태 저장을 못 해요")
+        val ok = saveSlot(id)
+        show(if (ok) "${SaveSlot.name(id)}에 저장함" else "이 게임은 상태 저장을 못 해요")
         slotsVersion++
+        if (ok) Sync.pushLater(ctx, romFile)
     }
     fun load(id: String) = tasks.add {
         val ok = Native.stateLoad(stateFile(id).path)
         show(if (ok) "${SaveSlot.name(id)} 불러옴" else "${SaveSlot.name(id)}이 비어 있어요")
     }
-    fun delete(id: String) { stateFile(id).delete(); thumbFile(id).delete(); slotsVersion++ }
+    fun delete(id: String) {
+        stateFile(id).delete(); thumbFile(id).delete(); slotsVersion++
+        Sync.deleted(ctx, listOf("$romFile.$id.state", "$romFile.$id.png"))
+    }
     private fun show(s: String) { toast = s }
 
     private fun emuLoop() {

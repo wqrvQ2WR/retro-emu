@@ -13,6 +13,9 @@ final class Emulator {
   /// saves/<롬 파일 이름>. 슬롯 파일은 여기에 .<슬롯>.state / .<슬롯>.png 를 붙인다.
   private var base = ""
   private var sramTick = 0
+  /// 롬 파일 이름(동기화에서 저장 파일을 고르는 기준)
+  private(set) var romFile = ""
+  static var savesDir: String { supportDir.appendingPathComponent("saves").path }
   /// 저장 목록을 보는 동안, 앱이 뒤로 간 동안 멈춘다(큐에서만 읽고 씀)
   private var panelPaused = false
   private var bgPaused = false
@@ -64,6 +67,7 @@ final class Emulator {
         return
       }
       let base = (rom as NSString).lastPathComponent
+      romFile = base
       sramPath = saves + "/" + base + ".srm"
       self.base = saves + "/" + base
       _ = rh_sram_load(sramPath)
@@ -86,6 +90,7 @@ final class Emulator {
       if framesRun >= 300 { saveSlot("auto") }  // 나갈 때 자동 저장(5초 넘게 했을 때만)
       _ = rh_sram_save(sramPath)
       rh_close()
+      pushSaves()
     }
   }
 
@@ -98,6 +103,7 @@ final class Emulator {
         if framesRun >= 300 { saveSlot("auto") }
         _ = rh_sram_save(sramPath)
         engine?.pause()
+        pushSaves()
       } else if let e = engine, !e.isRunning {
         try? e.start()
       }
@@ -141,6 +147,7 @@ final class Emulator {
       guard framesRun > 0 else { toast("게임을 시작한 뒤에 저장할 수 있어요"); return }
       let ok = saveSlot(id)
       toast(ok ? "\(SaveSlot.name(id))에 저장함" : "이 게임은 상태 저장을 못 해요")
+      if ok { pushSaves() }
       DispatchQueue.main.async { done?() }
     }
   }
@@ -157,6 +164,20 @@ final class Emulator {
   func delete(slot id: String) {
     try? FileManager.default.removeItem(atPath: statePath(id))
     try? FileManager.default.removeItem(atPath: thumbPath(id))
+    Sync.deleted(romFile: romFile, names: [romFile + "." + id + ".state", romFile + "." + id + ".png"])
+  }
+
+  /// 이 게임 저장을 다른 기기용으로 올린다(뒤에서, 게임은 안 멈춤)
+  private func pushSaves() {
+    guard Sync.enabled, !romFile.isEmpty else { return }
+    let f = romFile
+    // 앱이 뒤로 가도 올리기가 끝날 때까지 시간을 달라고 한다
+    var task = UIBackgroundTaskIdentifier.invalid
+    task = UIApplication.shared.beginBackgroundTask { UIApplication.shared.endBackgroundTask(task) }
+    DispatchQueue.global(qos: .utility).async {
+      Sync.syncGame(savesDir: Emulator.savesDir, romFile: f, pull: false)
+      UIApplication.shared.endBackgroundTask(task)
+    }
   }
 
   private func toast(_ s: String) { DispatchQueue.main.async { self.onToast?(s) } }
