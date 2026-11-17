@@ -58,8 +58,11 @@ jobs:
           xcrun simctl launch $UDID com.hayoonjae.retroemu --rom "$DATA/Documents/roms/test.nds"
           sleep 8; xcrun simctl io $UDID screenshot shots/5-ds.png
           xcrun simctl terminate $UDID com.hayoonjae.retroemu
-          xcrun simctl launch $UDID com.hayoonjae.retroemu --rom "$DATA/Documents/roms/test-psp.pbp"
+          xcrun simctl launch --stdout=$PWD/shots/psp-out.txt --stderr=$PWD/shots/psp-err.txt $UDID com.hayoonjae.retroemu --rom "$DATA/Documents/roms/test-psp.pbp"
           sleep 15; xcrun simctl io $UDID screenshot shots/6-psp.png
+          tail -60 shots/psp-err.txt shots/psp-out.txt || true
+          # 꺼졌으면 충돌 보고서
+          for f in $(ls -t ~/Library/Logs/DiagnosticReports/RetroEmu* 2>/dev/null | head -1); do cp "$f" shots/; head -c 6000 "$f"; done || true
           xcrun simctl spawn $UDID log show --last 3m --predicate 'process == "RetroEmu"' --style compact | grep -iE "rhost|\[pad\]|error|OpenGL|hw render" | tail -30 || true
       - uses: actions/upload-artifact@v4
         if: always()
