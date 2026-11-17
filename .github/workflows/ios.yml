@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main, ios-ci]
-    paths: ["ios/**", "host/**", "mac/Sources/RetroEmu/Sync*.swift", ".github/workflows/ios.yml"]
+    paths: ["ios/**", "host/**", "tests/**", "mac/Sources/RetroEmu/Sync*.swift", ".github/workflows/ios.yml"]
 
 jobs:
   build:
@@ -52,7 +52,15 @@ jobs:
           rm -rf "$DATA/Documents/saves"
           xcrun simctl launch $UDID com.hayoonjae.retroemu --rom "$DATA/Documents/roms/test.nes" -bigButtons YES -joystick YES
           sleep 5; xcrun simctl io $UDID screenshot shots/4-game-big.png
-          xcrun simctl spawn $UDID log show --last 3m --predicate 'process == "RetroEmu"' --style compact | grep -iE "rhost|\[pad\]|error" | tail -30 || true
+          xcrun simctl terminate $UDID com.hayoonjae.retroemu
+          # DS(직접 만든 테스트 롬)와 PSP(OpenGL ES 경로, 테스트 프로그램)
+          cp tests/test.nds tests/test-psp.pbp tests/test-psp.elf "$DATA/Documents/roms/"
+          xcrun simctl launch $UDID com.hayoonjae.retroemu --rom "$DATA/Documents/roms/test.nds"
+          sleep 8; xcrun simctl io $UDID screenshot shots/5-ds.png
+          xcrun simctl terminate $UDID com.hayoonjae.retroemu
+          xcrun simctl launch $UDID com.hayoonjae.retroemu --rom "$DATA/Documents/roms/test-psp.pbp"
+          sleep 15; xcrun simctl io $UDID screenshot shots/6-psp.png
+          xcrun simctl spawn $UDID log show --last 3m --predicate 'process == "RetroEmu"' --style compact | grep -iE "rhost|\[pad\]|error|OpenGL|hw render" | tail -30 || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
