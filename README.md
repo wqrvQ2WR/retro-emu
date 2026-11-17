@@ -1,6 +1,6 @@
 # retro-emu
 
-맥과 안드로이드에서 도는 고전 게임 에뮬레이터예요. 에뮬레이션은 [libretro](https://www.libretro.com/) 코어가 하고, 이 저장소는 그 코어를 불러서 화면, 소리, 입력, 저장을 맡는 작은 호스트와 두 앱을 담고 있어요.
+맥, 윈도우, 안드로이드에서 도는 고전 게임 에뮬레이터예요. 에뮬레이션은 [libretro](https://www.libretro.com/) 코어가 하고, 이 저장소는 그 코어를 불러서 화면, 소리, 입력, 저장을 맡는 작은 호스트와 세 앱을 담고 있어요.
 
 <p>
   <img src="docs/mac-library.png" width="62%" alt="맥 앱 게임 목록">
@@ -59,6 +59,21 @@
 | F3 | 저장 목록 |
 | Esc | 저장 목록 닫기, 게임 나가기 |
 
+### 윈도우
+
+<p>
+  <img src="docs/windows-library.png" width="49%" alt="윈도우판 게임 목록">
+  <img src="docs/windows-slots.png" width="49%" alt="윈도우판 저장 목록">
+</p>
+
+- 설치 없이 폴더째 두고 `RetroEmu.exe`를 실행해요. 윈도우 10 이상, 64비트.
+- 롬을 창에 끌어다 놓거나 **롬 추가**(Ctrl+O)로 넣어요. 넣은 롬은 `%APPDATA%\RetroEmu\roms`에 복사돼요.
+- 키는 맥과 같고, 더해서 F11이나 Alt+Enter로 전체 화면이에요.
+- 마우스 없이도 돼요. 목록과 저장 목록은 방향키와 Enter, 패드 십자키와 버튼으로 움직여요.
+- 목록에서 오른쪽 클릭이나 Delete는 지우기, 저장 목록에서는 S가 저장, Delete가 지우기예요.
+- 게임패드(엑스박스, 플스, 스위치 프로 등)는 연결하면 바로 써져요. 셀렉트+스타트나 가운데 홈 버튼으로 저장 목록을 열어요.
+- 화면은 SDL2로 그려요. 같은 코드를 맥에서도 빌드할 수 있어서 위 스크린샷은 맥에서 띄운 거예요.
+
 ### 안드로이드
 
 <img src="docs/phone-game.png" width="25%" alt="안드로이드에서 게임 하는 화면">
@@ -94,6 +109,29 @@ Swift 툴체인(Xcode 명령줄 도구)이 필요해요. `/Applications/RetroEmu
 open -a RetroEmu --args --rom /경로/게임.gba
 ```
 
+### 윈도우
+
+맥에서 [zig](https://ziglang.org/)로 교차 컴파일해요(`brew install zig`). SDL2, SDL2_ttf, 글꼴, 이미지 헤더는 `fetch-deps.sh`가 `windows/vendor/`에 받아요.
+
+```bash
+./fetch-cores.sh windows
+./windows/fetch-deps.sh
+./windows/build.sh
+```
+
+`windows/dist/RetroEmu-windows-x64.zip`이 나와요. 안에 exe, SDL DLL, 코어, 글꼴, 게임기 사진, `읽어보기.txt`가 들어 있어요.
+
+맥에서 윈도우판 화면을 바로 확인하려면 같은 코드를 맥용으로 빌드해요(`brew install sdl2 sdl2_ttf`). 실행 파일 옆에 `fonts/`와 `consoles/` 폴더가 있어야 해서, `windows/dist/RetroEmu/` 안에서 빌드하면 편해요.
+
+```bash
+cd windows
+clang -O2 $(sdl2-config --cflags) -I../host/include -I../host -Ivendor/stb main.c ../host/rhost.c \
+  -o dist/RetroEmu/retro-sdl $(sdl2-config --libs) -lSDL2_ttf
+dist/RetroEmu/retro-sdl --cores ../cores/mac
+```
+
+`--script "wait:60,key:Return,shot:a.png,quit"`를 주면 키 입력과 스크린샷을 순서대로 해서 화면을 자동으로 점검할 수 있어요.
+
 ### 안드로이드
 
 Android SDK와 NDK `27.2.12479018`이 필요해요. 폰에는 릴리스 빌드로 까는 걸 권해요. 디버그 빌드는 화면이 눈에 띄게 느려요.
@@ -111,6 +149,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 | | 위치 |
 |---|---|
 | 맥 | `~/Library/Application Support/RetroEmu/` (`roms/`, `saves/`, `system/`) |
+| 윈도우 | `%APPDATA%\RetroEmu\` (`roms\`, `saves\`, `system\`) |
 | 안드로이드 | 앱 내부 저장소 `files/` (`roms/`, `saves/`, `system/`) |
 
 `saves/` 안의 이름은 `<롬 파일 이름>.<슬롯>.state`(상태), `.png`(썸네일), `.srm`(배터리 세이브)이에요. 슬롯은 `auto`, `1`~`6`이에요.
@@ -120,6 +159,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 host/      공용 C 호스트(rhost). 코어를 dlopen 해서 영상(RGBA), 소리, 입력, 저장을 처리
 mac/       SwiftUI 앱 + build-app.sh
+windows/   SDL2 앱(main.c) + build.sh(zig 교차 컴파일). 맥에서도 빌드돼서 화면 점검에 쓴다
 android/   Jetpack Compose 앱 + JNI(ndk-build). jni.c 가 rhost 와 SurfaceView 출력을 잇는다
 assets/    앱 아이콘, 게임기 사진
 tests/     테스트용 패미컴 롬을 직접 만드는 스크립트(mk_nes.py)와 그 롬
@@ -138,3 +178,4 @@ clang -O2 -Ihost/include -Ihost host/rhost.c host/test.c -o rtest
 - 게임기 사진은 위키미디어 공용의 퍼블릭 도메인 사진이에요. 파일별 출처는 [assets/consoles/CREDITS.md](assets/consoles/CREDITS.md)에 있어요.
 - 코어는 저장소에 들어 있지 않고 `fetch-cores.sh`가 받아요. 코어마다 라이선스가 달라요. FCEUmm과 PCSX ReARMed는 GPLv2, mGBA는 MPL 2.0이고, Snes9x와 Genesis Plus GX는 비상업적 사용만 허락해요.
 - `host/libretro.h`는 libretro API 헤더예요(MIT).
+- 윈도우판은 SDL2·SDL2_ttf(zlib), 글꼴 Pretendard(SIL OFL), stb_image(퍼블릭 도메인)를 써요. 배포 zip의 `licenses/`에 원문이 들어 있어요.

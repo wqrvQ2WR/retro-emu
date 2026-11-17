@@ -334,7 +334,7 @@ fun SlotSheet(engine: Engine, onClose: () -> Unit, onLoaded: () -> Unit) {
                             modifier = Modifier.padding(top = 6.dp))
                         Text(s.time?.let { slotTimeFmt.format(java.util.Date(it)) } ?: "", fontSize = 11.sp, color = Color(0x80000000), maxLines = 1)
                         Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            if (!s.isAuto) SlotPill("저장", false, true, Modifier.weight(1f)) {
+                            if (!s.isAuto) SlotPill("저장", false, engine.hasRun, Modifier.weight(1f)) {
                                 if (s.time != null) overwrite = s.id else engine.save(s.id)
                             }
                             SlotPill("불러오기", true, s.time != null, Modifier.weight(1f)) { engine.load(s.id); onLoaded() }

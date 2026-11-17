@@ -43,7 +43,7 @@ class Engine(private val ctx: Context) {
     /** saves/<롬 이름>. 슬롯 파일은 .<슬롯>.state / .<슬롯>.png */
     private var base = ""
     /** 이번에 켜고 나서 돈 프레임 수. 거의 안 했으면 나갈 때 자동 저장을 덮어쓰지 않는다. */
-    private var framesRun = 0
+    @Volatile private var framesRun = 0
     /** 저장 목록이 바뀌면 올라간다(Compose 가 다시 읽게) */
     var slotsVersion by mutableIntStateOf(0)
 
@@ -112,7 +112,11 @@ class Engine(private val ctx: Context) {
         if (bg && running) tasks.add { if (framesRun >= 300) { saveSlot("auto"); slotsVersion++ }; Native.sramSave(sramPath) }
     }
 
+    /** 켜고 나서 한 프레임이라도 돌았는지(켜자마자 뜬 목록에서 빈 상태로 덮어쓰기 방지) */
+    val hasRun get() = framesRun > 0
+
     fun save(id: String) = tasks.add {
+        if (framesRun == 0) { show("게임을 시작한 뒤에 저장할 수 있어요"); return@add }
         show(if (saveSlot(id)) "${SaveSlot.name(id)}에 저장함" else "이 게임은 상태 저장을 못 해요")
         slotsVersion++
     }

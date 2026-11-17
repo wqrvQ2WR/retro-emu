@@ -168,6 +168,7 @@ struct PlayView: View {
   @State private var slots: [SaveSlot] = []
   /// F1/F2 가 쓰는 슬롯
   @State private var quickSlot = "1"
+  @State private var canSave = true
 
   var body: some View {
     ZStack(alignment: .top) {
@@ -182,7 +183,7 @@ struct PlayView: View {
         }
       }
       if panel {
-        SlotPanel(slots: slots, quickSlot: quickSlot,
+        SlotPanel(slots: slots, quickSlot: quickSlot, canSave: canSave,
                   onSave: { id in quickSlot = id; emu.save(slot: id) { slots = emu.slots() } },
                   onLoad: { id in if !SaveSlot.isAutoId(id) { quickSlot = id }; emu.load(slot: id); setPanel(false) },
                   onDelete: { id in emu.delete(slot: id); slots = emu.slots() },
@@ -213,7 +214,7 @@ struct PlayView: View {
   }
 
   func setPanel(_ open: Bool) {
-    if open { slots = emu.slots() }
+    if open { slots = emu.slots(); canSave = emu.hasRun }
     emu.setPaused(open)
     withAnimation(.easeOut(duration: 0.15)) { panel = open }
   }
@@ -235,6 +236,7 @@ struct PlayView: View {
 struct SlotPanel: View {
   let slots: [SaveSlot]
   let quickSlot: String
+  let canSave: Bool
   let onSave: (String) -> Void
   let onLoad: (String) -> Void
   let onDelete: (String) -> Void
@@ -254,7 +256,7 @@ struct SlotPanel: View {
         ScrollView {
           LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {
             ForEach(slots) { s in
-              SlotCard(slot: s, selected: s.id == quickSlot,
+              SlotCard(slot: s, selected: s.id == quickSlot, canSave: canSave,
                        onSave: { if s.date != nil { overwrite = s.id } else { onSave(s.id) } },
                        onLoad: { onLoad(s.id) })
                 .contextMenu { if s.date != nil { Button("지우기") { onDelete(s.id) } } }
@@ -278,6 +280,7 @@ struct SlotPanel: View {
 struct SlotCard: View {
   let slot: SaveSlot
   let selected: Bool
+  let canSave: Bool
   let onSave: () -> Void
   let onLoad: () -> Void
 
@@ -304,7 +307,7 @@ struct SlotCard: View {
           .font(.system(size: 11, weight: .medium)).foregroundColor(.black.opacity(0.5)).lineLimit(1)
       }
       HStack(spacing: 8) {
-        if !slot.isAuto { pill("저장", filled: false, action: onSave) }
+        if !slot.isAuto { pill("저장", filled: false, action: onSave).disabled(!canSave).opacity(canSave ? 1 : 0.35) }
         pill("불러오기", filled: true, action: onLoad).disabled(slot.date == nil).opacity(slot.date == nil ? 0.35 : 1)
       }
     }

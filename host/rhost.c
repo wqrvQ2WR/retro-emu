@@ -1,11 +1,52 @@
 #include "rhost.h"
 #include "libretro.h"
-#include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+
+#ifdef _WIN32
+// 윈도우: 코어는 DLL, 경로는 UTF-8 로 받아서 넓은 문자로 바꿔 연다(한글 폴더 대응).
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+static wchar_t *widen(const char *s) {
+  int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
+  wchar_t *w = malloc(sizeof(wchar_t) * (n > 0 ? n : 1)); w[0] = 0;
+  if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s, -1, w, n);
+  return w;
+}
+static FILE *u8fopen(const char *p, const char *mode) {
+  wchar_t *wp = widen(p), *wm = widen(mode); FILE *f = _wfopen(wp, wm); free(wp); free(wm); return f;
+}
+static int u8replace(const char *from, const char *to) {  // 있으면 덮어쓰기
+  wchar_t *a = widen(from), *b = widen(to);
+  int ok = MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+  free(a); free(b); return ok ? 0 : -1;
+}
+static int u8remove(const char *p) { wchar_t *w = widen(p); int r = _wremove(w); free(w); return r; }
+static void *lib_open(const char *p) { wchar_t *w = widen(p); HMODULE h = LoadLibraryW(w); free(w); return h; }
+static void *lib_sym(void *h, const char *n) { return (void *)GetProcAddress((HMODULE)h, n); }
+static void lib_close(void *h) { FreeLibrary((HMODULE)h); }
+static const char *lib_err(void) { static char b[64]; snprintf(b, sizeof b, "윈도우 오류 %lu", GetLastError()); return b; }
+typedef SRWLOCK mutex_t;
+#define MUTEX_INIT SRWLOCK_INIT
+#define mutex_lock(m) AcquireSRWLockExclusive(m)
+#define mutex_unlock(m) ReleaseSRWLockExclusive(m)
+#else
+#include <dlfcn.h>
 #include <pthread.h>
+#define u8fopen fopen
+#define u8replace rename
+#define u8remove remove
+static void *lib_open(const char *p) { return dlopen(p, RTLD_NOW | RTLD_LOCAL); }
+static void *lib_sym(void *h, const char *n) { return dlsym(h, n); }
+static void lib_close(void *h) { dlclose(h); }
+static const char *lib_err(void) { return dlerror(); }
+typedef pthread_mutex_t mutex_t;
+#define MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
+#define mutex_lock pthread_mutex_lock
+#define mutex_unlock pthread_mutex_unlock
+#endif
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -56,7 +97,7 @@ static uint64_t g_serial;
 #define RING_FRAMES 16384
 static int16_t g_ring[RING_FRAMES * 2];
 static volatile unsigned g_rd, g_wr; // 단조 증가
-static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+static mutex_t g_mu = MUTEX_INIT;
 
 static uint32_t g_input;
 
@@ -144,13 +185,13 @@ static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
 }
 
 static size_t audio_batch_cb(const int16_t *data, size_t frames) {
-  pthread_mutex_lock(&g_mu);
+  mutex_lock(&g_mu);
   for (size_t i = 0; i < frames; i++) {
     if (g_wr - g_rd >= RING_FRAMES) g_rd++; // 넘치면 오래된 것부터 버림
     unsigned k = (g_wr++ % RING_FRAMES) * 2;
     g_ring[k] = data[i * 2]; g_ring[k + 1] = data[i * 2 + 1];
   }
-  pthread_mutex_unlock(&g_mu);
+  mutex_unlock(&g_mu);
   return frames;
 }
 static void audio_cb(int16_t l, int16_t r) { int16_t s[2] = {l, r}; audio_batch_cb(s, 1); }
@@ -161,15 +202,15 @@ static int16_t input_cb(unsigned port, unsigned dev, unsigned idx, unsigned id) 
   return id < 16 ? (g_input >> id) & 1 : 0;
 }
 
-#define SYM(f, n) do { *(void **)&C.f = dlsym(C.lib, n); if (!C.f) { set_err("심볼 없음: %s", n); return 0; } } while (0)
+#define SYM(f, n) do { *(void **)&C.f = lib_sym(C.lib, n); if (!C.f) { set_err("심볼 없음: %s", n); return 0; } } while (0)
 
 int rh_open(const char *core_path, const char *system_dir, const char *save_dir) {
   rh_close();
   g_err[0] = 0;
   snprintf(g_sys, sizeof g_sys, "%s", system_dir ? system_dir : ".");
   snprintf(g_save, sizeof g_save, "%s", save_dir ? save_dir : ".");
-  C.lib = dlopen(core_path, RTLD_NOW | RTLD_LOCAL);
-  if (!C.lib) { set_err("코어를 못 열었어요: %s", dlerror()); return 0; }
+  C.lib = lib_open(core_path);
+  if (!C.lib) { set_err("코어를 못 열었어요: %s", lib_err()); return 0; }
   SYM(set_environment, "retro_set_environment");
   SYM(set_video_refresh, "retro_set_video_refresh");
   SYM(set_audio_sample, "retro_set_audio_sample");
@@ -205,7 +246,7 @@ int rh_load(const char *rom_path) {
   struct retro_game_info gi = {0};
   gi.path = rom_path;
   if (!si.need_fullpath) {
-    FILE *f = fopen(rom_path, "rb");
+    FILE *f = u8fopen(rom_path, "rb");
     if (!f) { set_err("롬 파일을 못 읽었어요: %s", rom_path); return 0; }
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
     g_rom = malloc(n);
@@ -226,7 +267,7 @@ void rh_close(void) {
   if (C.lib) {
     if (g_loaded) C.unload_game();
     C.deinit();
-    dlclose(C.lib);
+    lib_close(C.lib);
   }
   memset(&C, 0, sizeof C);
   g_loaded = 0; free(g_rom); g_rom = NULL; g_input = 0;
@@ -248,13 +289,13 @@ double rh_aspect(void) {
 }
 
 int rh_audio_read(int16_t *out, int frames) {
-  pthread_mutex_lock(&g_mu);
+  mutex_lock(&g_mu);
   int n = 0;
   while (n < frames && g_rd != g_wr) {
     unsigned k = (g_rd++ % RING_FRAMES) * 2;
     out[n * 2] = g_ring[k]; out[n * 2 + 1] = g_ring[k + 1]; n++;
   }
-  pthread_mutex_unlock(&g_mu);
+  mutex_unlock(&g_mu);
   if (n < frames) memset(out + n * 2, 0, (size_t)(frames - n) * 4);
   return n;
 }
@@ -266,13 +307,13 @@ size_t rh_state_size(void) { return g_loaded ? C.serialize_size() : 0; }
 // 임시 파일에 다 쓰고 나서 바꿔치기한다. 쓰다 죽어도 예전 저장은 남는다.
 static int write_file(const char *p, const void *d, size_t n) {
   char tmp[2048]; snprintf(tmp, sizeof tmp, "%s.tmp", p);
-  FILE *f = fopen(tmp, "wb"); if (!f) return 0;
+  FILE *f = u8fopen(tmp, "wb"); if (!f) return 0;
   size_t w = fwrite(d, 1, n, f);
-  if (fclose(f) != 0 || w != n) { remove(tmp); return 0; }
-  return rename(tmp, p) == 0;
+  if (fclose(f) != 0 || w != n) { u8remove(tmp); return 0; }
+  return u8replace(tmp, p) == 0;
 }
 static void *read_file(const char *p, size_t *n) {
-  FILE *f = fopen(p, "rb"); if (!f) return NULL;
+  FILE *f = u8fopen(p, "rb"); if (!f) return NULL;
   fseek(f, 0, SEEK_END); *n = ftell(f); fseek(f, 0, SEEK_SET);
   void *b = malloc(*n ? *n : 1);
   if (fread(b, 1, *n, f) != *n) { free(b); b = NULL; }

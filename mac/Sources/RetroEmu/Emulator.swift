@@ -108,9 +108,13 @@ final class Emulator {
     return true
   }
 
+  /// 켜고 나서 한 프레임이라도 돌았는지(켜자마자 뜬 목록에서 빈 상태로 덮어쓰기 방지)
+  var hasRun: Bool { queue.sync { framesRun > 0 } }
+
   func save(slot id: String, done: (() -> Void)? = nil) {
     queue.async { [self] in
       guard running else { return }
+      guard framesRun > 0 else { toast("게임을 시작한 뒤에 저장할 수 있어요"); return }
       let ok = saveSlot(id)
       toast(ok ? "\(SaveSlot.name(id))에 저장함" : "이 게임은 상태 저장을 못 해요")
       DispatchQueue.main.async { done?() }

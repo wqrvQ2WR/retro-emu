@@ -8,3 +8,6 @@ android/app/.cxx/
 android/local.properties
 cores/
 android/app/src/main/jniLibs/
+windows/vendor/
+windows/dist/
+windows/*.res
