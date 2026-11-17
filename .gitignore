@@ -11,3 +11,6 @@ android/app/src/main/jniLibs/
 windows/vendor/
 windows/dist/
 windows/*.res
+mac/dist/
+dist-release/
+ios/dist/
