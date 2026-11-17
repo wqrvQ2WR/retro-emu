@@ -865,13 +865,22 @@ static void draw_confirm(void) {
 
 // ---------------------------------------------------------------- 동기화 설정 창
 
-static struct { int open; char code[32]; char status[160]; } syncui;
+static struct { int open; char code[32]; char server[300]; int focus, fresh; char status[160]; } syncui;   // focus 0=코드 1=서버, fresh=칸을 막 골라서 전체 선택된 상태
+static void sync_focus(int f) { syncui.focus = f; syncui.fresh = 1; }
 static void sync_open(int open) {
   syncui.open = open;
-  if (open) { snprintf(syncui.code, sizeof syncui.code, "%s", sync_code()); syncui.status[0] = 0; SDL_StartTextInput(); }
-  else SDL_StopTextInput();
+  if (open) {
+    snprintf(syncui.code, sizeof syncui.code, "%s", sync_code());
+    snprintf(syncui.server, sizeof syncui.server, "%s", sync_server());
+    syncui.status[0] = 0; syncui.focus = 0; syncui.fresh = 0; SDL_StartTextInput();
+  } else SDL_StopTextInput();
 }
-static void sync_type(const char *t) {   // 영문·숫자·- 만, 대문자로
+static void sync_type(const char *t) {   // 코드: 영문·숫자·- 만 대문자로 / 서버: 보이는 글자 아무거나
+  if (syncui.fresh) { (syncui.focus ? syncui.server : syncui.code)[0] = 0; syncui.fresh = 0; }   // 고른 칸에 처음 치면 새로 씀
+  if (syncui.focus == 1) {
+    for (; *t; t++) { size_t n = strlen(syncui.server); if (*t > ' ' && *t < 127 && n + 1 < sizeof syncui.server) { syncui.server[n] = *t; syncui.server[n + 1] = 0; } }
+    return;
+  }
   for (; *t; t++) {
     char c = *t; if (c >= 'a' && c <= 'z') c -= 32;
     if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-')) continue;
@@ -890,12 +899,14 @@ static void sync_now(void) {
 static void sync_apply(void) {
   if (strlen(syncui.code) < 4) return;
   sync_set_code(syncui.code);
+  sync_set_server(syncui.server);
+  snprintf(syncui.server, sizeof syncui.server, "%s", sync_server());
   sync_now();
 }
 static void fmt_time(time_t t, char *out, size_t n);
 static void draw_sync(void) {
   SDL_SetRenderDrawColor(ren, 0, 0, 0, 120); SDL_RenderFillRect(ren, NULL);
-  float w = fminf(W - 40 * S, 540 * S), h = 296 * S, x = (W - w) / 2, y = (H - h) / 2;
+  float w = fminf(W - 40 * S, 540 * S), h = 392 * S, x = (W - w) / 2, y = (H - h) / 2;
   shadow(x, y, w, h, 22 * S, 90);
   SDL_Color a = {255, 238, 247, 255}, b = {230, 244, 255, 255};
   rrect(x, y, w, h, 22 * S, a, b, 2);
@@ -910,17 +921,41 @@ static void draw_sync(void) {
   float fw = w - 44 * S - 98 * S, fh = 40 * S;
   SDL_Color wc = rgba(255, 255, 255, 235);
   rrect(x + 22 * S, ty, fw, fh, 10 * S, wc, wc, 0);
-  char shown[40]; snprintf(shown, sizeof shown, "%s%s", syncui.code, (SDL_GetTicks() / 500) % 2 ? "|" : " ");
+  if (syncui.focus == 0) rrect(x + 22 * S, ty + fh - 3 * S, fw, 3 * S, 1.5f * S, PINK, SKY, 1);
+  if (mouse_click && hit(x + 22 * S, ty, fw, fh)) { sync_focus(0); mouse_click = 0; }
+  const char *caret = (SDL_GetTicks() / 500) % 2 ? "|" : " ";
+  char shown[40]; snprintf(shown, sizeof shown, "%s%s", syncui.code, syncui.focus == 0 && !syncui.fresh ? caret : "");
+  if (syncui.focus == 0 && syncui.fresh && syncui.code[0]) { SDL_Color sel = rgba(155, 92, 255, 60); rrect(x + 30 * S, ty + 7 * S, text_w(syncui.code, 18, 1) + 8 * S, fh - 14 * S, 6 * S, sel, sel, 0); }
   if (syncui.code[0]) text(shown, x + 34 * S, ty + 9 * S, 18, 1, rgba(0, 0, 0, 220), 0);
   else text("예: K7PM-2QXA", x + 34 * S, ty + 10 * S, 16, 0, rgba(0, 0, 0, 90), 0);
   if (btn("새 코드", x + w - 22 * S - 88 * S, ty + 4 * S, 88 * S, 32 * S, 0, 1) && mouse_click) { char c[10]; sync_new_code(c); snprintf(syncui.code, sizeof syncui.code, "%s", c); mouse_click = 0; }
   ty += fh + 8 * S;
   ty = text_wrap("처음 쓰는 기기에서 새 코드를 만들고, 다른 기기엔 그 코드를 그대로 넣어요. 코드를 아는 사람은 저장을 볼 수 있으니 남한테 알려주지 마세요. Ctrl+V 로 붙여 넣을 수 있어요.",
                  x + 22 * S, ty, w - 44 * S, 11, 0, rgba(0, 0, 0, 120), 2);
-  ty += 12 * S;
-  int same = sync_enabled() && !strcmp(sync_code(), syncui.code);
+  ty += 10 * S;
+  // 서버 주소
+  text("서버 주소", x + 22 * S, ty, 13, 1, rgba(0, 0, 0, 180), 0);
+  ty += 22 * S;
+  float sh = 34 * S, sw2 = w - 44 * S - 132 * S;
+  rrect(x + 22 * S, ty, sw2, sh, 10 * S, wc, wc, 0);
+  if (syncui.focus == 1) rrect(x + 22 * S, ty + sh - 3 * S, sw2, 3 * S, 1.5f * S, PINK, SKY, 1);
+  if (mouse_click && hit(x + 22 * S, ty, sw2, sh)) { sync_focus(1); mouse_click = 0; }
+  {  // 길면 뒤쪽이 보이게
+    char sv[340]; snprintf(sv, sizeof sv, "%s%s", syncui.server, syncui.focus == 1 && !syncui.fresh ? caret : "");
+    if (syncui.focus == 1 && syncui.fresh && syncui.server[0]) { SDL_Color sel = rgba(155, 92, 255, 60); rrect(x + 28 * S, ty + 6 * S, fminf(text_w(syncui.server, 13, 0), sw2 - 20 * S) + 8 * S, sh - 12 * S, 5 * S, sel, sel, 0); }
+    const char *p = sv; while (*p && text_w(p, 13, 0) > sw2 - 20 * S) { p++; while (((unsigned char)*p & 0xC0) == 0x80) p++; }
+    text(p, x + 32 * S, ty + 8 * S, 13, 0, rgba(0, 0, 0, 210), 0);
+  }
+  if (btn("파이(테일스케일)", x + w - 22 * S - 124 * S, ty + 1 * S, 124 * S, 32 * S, 0, 1) && mouse_click) {
+    snprintf(syncui.server, sizeof syncui.server, "%s", SYNC_DEFAULT_SERVER); mouse_click = 0;
+  }
+  ty += sh + 6 * S;
+  ty = text_wrap("같은 와이파이면 서버를 깐 맥의 주소(맥 앱 동기화 창에 나와요)를, 테일스케일을 쓰면 파이 주소를 넣어요. Tab 으로 칸을 바꿔요.",
+                 x + 22 * S, ty, w - 44 * S, 11, 0, rgba(0, 0, 0, 120), 2);
+  ty += 10 * S;
+  int same = sync_enabled() && !strcmp(sync_code(), syncui.code) && !strcmp(sync_server(), syncui.server);
   float bx = x + 22 * S, bh = 34 * S;
-  if (btn(same ? "저장됨" : "코드 저장", bx, ty, 104 * S, bh, 1, strlen(syncui.code) >= 4) && mouse_click) { mouse_click = 0; sync_apply(); }
+  if (btn(same ? "저장됨" : "저장", bx, ty, 104 * S, bh, 1, strlen(syncui.code) >= 4) && mouse_click) { mouse_click = 0; sync_apply(); }
   bx += 112 * S;
   if (btn("지금 맞추기", bx, ty, 112 * S, bh, 0, sync_enabled()) && mouse_click) { mouse_click = 0; sync_now(); }
   bx += 120 * S;
@@ -977,7 +1012,7 @@ static int script_step(int *quit) {
   if (!strncmp(cmd, "wait:", 5)) script_wait = atoi(cmd + 5);
   else if (!strncmp(cmd, "shot:", 5)) save_shot(cmd + 5);
   else if (!strcmp(cmd, "quit")) *quit = 1;
-  else if (!strncmp(cmd, "type:", 5)) { SDL_Event e = {0}; e.type = SDL_TEXTINPUT; snprintf(e.text.text, sizeof e.text.text, "%s", cmd + 5); SDL_PushEvent(&e); }
+  else if (!strncmp(cmd, "type:", 5)) { if (syncui.open) sync_type(cmd + 5); }   // 글자 입력 이벤트를 흉내 내면 sdl2-compat 에서 죽어서 바로 넣음
   else if (!strncmp(cmd, "key:", 4) || !strncmp(cmd, "down:", 5) || !strncmp(cmd, "up:", 3)) {
     int down = cmd[0] != 'u', up = cmd[0] != 'd';
     SDL_Scancode sc = SDL_GetScancodeFromName(strchr(cmd, ':') + 1);
@@ -1110,10 +1145,14 @@ int main(int argc, char **argv) {
         int down = e.type == SDL_KEYDOWN; SDL_Scancode k = e.key.keysym.scancode;
         if (syncui.open) {
           if (!down) break;
-          size_t n = strlen(syncui.code);
+          char *fld = syncui.focus ? syncui.server : syncui.code;
+          size_t n = strlen(fld);
           if (k == SDL_SCANCODE_ESCAPE) sync_open(0);
-          else if (k == SDL_SCANCODE_BACKSPACE && n) syncui.code[n - 1] = 0;
-          else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER) sync_apply();
+          else if (k == SDL_SCANCODE_TAB) sync_focus(!syncui.focus);
+          else if (k == SDL_SCANCODE_BACKSPACE && syncui.fresh) { fld[0] = 0; syncui.fresh = 0; }
+          else if (k == SDL_SCANCODE_BACKSPACE && n) fld[n - 1] = 0;
+          else if (k == SDL_SCANCODE_RETURN || k == SDL_SCANCODE_KP_ENTER) { syncui.fresh = 0; sync_apply(); }
+          else if (k == SDL_SCANCODE_A && (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI))) syncui.fresh = 1;
           else if (k == SDL_SCANCODE_V && (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI))) { char *c = SDL_GetClipboardText(); if (c) { sync_type(c); SDL_free(c); } }
           break;
         }

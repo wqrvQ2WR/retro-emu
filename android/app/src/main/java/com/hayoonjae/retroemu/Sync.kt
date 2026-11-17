@@ -21,9 +21,20 @@ object Sync {
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("sync", Context.MODE_PRIVATE)
     fun code(ctx: Context) = prefs(ctx).getString("code", "") ?: ""
     fun setCode(ctx: Context, c: String) = prefs(ctx).edit().putString("code", c.trim().uppercase()).apply()
+    /** 같은 와이파이의 맥(sync-server/install-mac.sh)이나 테일스케일 너머 파이 등 아무 주소나 */
     fun server(ctx: Context) = prefs(ctx).getString("server", null) ?: DEFAULT_SERVER
-    /** 점검용(adb 로 127.0.0.1 서버를 쓸 때만) */
-    fun setServer(ctx: Context, s: String?) = prefs(ctx).edit().putString("server", s).apply()
+    fun setServer(ctx: Context, s: String?) = prefs(ctx).edit().putString("server", s?.let { normalize(it) }).apply()
+
+    /** "192.168.0.5:8270" 처럼 넣어도 되게: http:// 붙이고, 경로가 없으면 /retro-sync, 끝 / 는 뗀다 */
+    fun normalize(s: String): String {
+        var t = s.trim()
+        if (t.isEmpty()) return DEFAULT_SERVER
+        if (!t.contains("://")) t = "http://$t"
+        t = t.trimEnd('/')
+        val path = runCatching { java.net.URI(t).path }.getOrNull()
+        if (path.isNullOrEmpty() || path == "/") t += "/retro-sync"
+        return t
+    }
     fun enabled(ctx: Context) = code(ctx).length >= 4
     fun lastSync(ctx: Context) = prefs(ctx).getLong("last", 0L)
 

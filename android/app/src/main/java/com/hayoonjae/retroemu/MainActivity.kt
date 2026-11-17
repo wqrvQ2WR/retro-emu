@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // 점검용: adb shell am start -n ... --es sync_code X --es sync_server http://127.0.0.1:8270/retro-sync
         intent?.getStringExtra("sync_code")?.let { Sync.setCode(this, it) }
-        intent?.getStringExtra("sync_server")?.let { if (it.startsWith("http://127.0.0.1:") || it == "default") Sync.setServer(this, it.takeIf { s -> s != "default" }) }
+        intent?.getStringExtra("sync_server")?.let { Sync.setServer(this, it.takeIf { s -> s != "default" }) }
         setContent { MaterialTheme(colorScheme = lightColorScheme(primary = Violet)) { Root() } }
     }
 
@@ -594,6 +594,7 @@ fun StartSelect(engine: Engine, k: Float) {
 fun SyncDialog(games: List<File>, onClose: () -> Unit) {
     val ctx = LocalView.current.context
     var code by remember { mutableStateOf(Sync.code(ctx)) }
+    var server by remember { mutableStateOf(Sync.server(ctx)) }
     var status by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var on by remember { mutableStateOf(Sync.enabled(ctx)) }
@@ -631,9 +632,17 @@ fun SyncDialog(games: List<File>, onClose: () -> Unit) {
                 }
                 Text("처음 쓰는 기기에서 새 코드를 만들고, 다른 기기엔 그 코드를 그대로 넣어요. 코드를 아는 사람은 저장을 볼 수 있으니 남한테 알려주지 마세요.",
                     fontSize = 11.sp, color = Color(0x80000000))
+                OutlinedTextField(server, { server = it }, label = { Text("서버 주소") }, singleLine = true,
+                    placeholder = { Text("192.168.0.10:8270") }, modifier = Modifier.fillMaxWidth(),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 13.sp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { server = Sync.DEFAULT_SERVER }) { Text("파이(테일스케일)") }
+                }
+                Text("같은 와이파이면 서버를 깐 맥의 주소(맥 앱 동기화 창에 나와요)를, 테일스케일을 쓰면 파이 주소를 넣어요.",
+                    fontSize = 11.sp, color = Color(0x80000000))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { Sync.setCode(ctx, code); code = Sync.code(ctx); on = Sync.enabled(ctx); syncNow() },
-                        enabled = code.trim().length >= 4 && !busy) { Text("코드 저장") }
+                    Button(onClick = { Sync.setCode(ctx, code); code = Sync.code(ctx); Sync.setServer(ctx, server); server = Sync.server(ctx); on = Sync.enabled(ctx); syncNow() },
+                        enabled = code.trim().length >= 4 && !busy) { Text("저장") }
                     if (on) OutlinedButton(onClick = { syncNow() }, enabled = !busy) { Text("지금 맞추기") }
                 }
                 if (on) TextButton(onClick = { Sync.setCode(ctx, ""); code = ""; on = false; status = "동기화를 껐어요" }) { Text("동기화 끄기") }

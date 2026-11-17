@@ -12,9 +12,45 @@ enum Sync {
     get { UserDefaults.standard.string(forKey: "syncCode") ?? "" }
     set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(), forKey: "syncCode") }
   }
-  /// 점검할 땐 RETROEMU_SYNC 환경변수로 서버를 바꾼다
+  /// 같은 와이파이의 맥(sync-server/install-mac.sh)이나 테일스케일 너머 파이 등 아무 주소나 넣을 수 있다.
+  /// 점검할 땐 RETROEMU_SYNC 환경변수가 이긴다.
   static var server: String {
-    ProcessInfo.processInfo.environment["RETROEMU_SYNC"] ?? UserDefaults.standard.string(forKey: "syncServer") ?? defaultServer
+    get { ProcessInfo.processInfo.environment["RETROEMU_SYNC"] ?? UserDefaults.standard.string(forKey: "syncServer") ?? defaultServer }
+    set { UserDefaults.standard.set(normalize(newValue), forKey: "syncServer") }
+  }
+
+  /// "192.168.0.5:8270" 처럼 넣어도 되게: http:// 붙이고, 경로가 없으면 /retro-sync, 끝 / 는 뗀다
+  static func normalize(_ s: String) -> String {
+    var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+    if t.isEmpty { return defaultServer }
+    if !t.contains("://") { t = "http://" + t }
+    while t.hasSuffix("/") { t.removeLast() }
+    if let u = URL(string: t), u.path.isEmpty || u.path == "/" { t += "/retro-sync" }
+    return t
+  }
+
+  /// 같은 와이파이에서 이 기기 주소(맥이 서버일 때 다른 기기에 알려줄 것)
+  static func lanAddress() -> String? {
+    var ifs: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&ifs) == 0, let first = ifs else { return nil }
+    defer { freeifaddrs(ifs) }
+    var out: String?
+    for p in sequence(first: first, next: { $0.pointee.ifa_next }) {
+      let a = p.pointee
+      guard let sa = a.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET) else { continue }
+      let name = String(cString: a.ifa_name)
+      guard name == "en0" || name == "en1" else { continue }
+      var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+      if getnameinfo(sa, socklen_t(sa.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+        out = String(cString: host); if name == "en0" { break }
+      }
+    }
+    return out
+  }
+
+  /// 이 기기에서 동기화 서버가 돌고 있는지(맥에서 install-mac.sh 로 깐 경우)
+  static func localServerUp() -> Bool {
+    request("http://127.0.0.1:8270/retro-sync/health", "GET", timeout: 1.5)?.0 == 200
   }
   static var enabled: Bool { code.count >= 4 }
   static var lastSync: Date? {

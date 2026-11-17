@@ -18,7 +18,7 @@
 #include <unistd.h>
 #endif
 
-static char cfg_path[2100], code_[64], server_[512];
+static char cfg_path[2100], code_[64], server_[512], server_saved[512];   // server_saved: 설정 파일에 쓴 값(비면 기본)
 static time_t last_;
 static SDL_mutex *lock_;
 static SDL_atomic_t active_;
@@ -82,7 +82,7 @@ static FILE *cfg_open(int write) {
 static void save_cfg(void) {
   FILE *f = cfg_open(1);
   if (!f) return;
-  fprintf(f, "code=%s\nlast=%lld\n", code_, (long long)last_);
+  fprintf(f, "code=%s\nserver=%s\nlast=%lld\n", code_, server_saved, (long long)last_);
   fclose(f);
 }
 
@@ -98,11 +98,28 @@ void sync_init(const char *data_dir) {
     line[strcspn(line, "\r\n")] = 0;
     if (!strncmp(line, "code=", 5)) snprintf(code_, sizeof code_, "%s", line + 5);
     if (!strncmp(line, "last=", 5)) last_ = (time_t)atoll(line + 5);
+    if (!strncmp(line, "server=", 7) && line[7]) snprintf(server_saved, sizeof server_saved, "%s", line + 7);
   }
   fclose(f);
+  if (server_saved[0] && !(env && *env)) snprintf(server_, sizeof server_, "%s", server_saved);
 }
 
 const char *sync_code(void) { return code_; }
+const char *sync_server(void) { return server_; }
+
+void sync_set_server(const char *u) {
+  char t[512]; while (*u == ' ') u++;
+  snprintf(t, sizeof t, "%s", u);
+  size_t n = strlen(t); while (n && (t[n - 1] == ' ' || t[n - 1] == '/')) t[--n] = 0;
+  if (!n) { server_saved[0] = 0; snprintf(server_, sizeof server_, "%s", SYNC_DEFAULT_SERVER); save_cfg(); return; }
+  char full[600];
+  snprintf(full, sizeof full, "%s%s", strstr(t, "://") ? "" : "http://", t);
+  const char *host = strstr(full, "://") + 3;
+  if (!strchr(host, '/')) strncat(full, "/retro-sync", sizeof full - strlen(full) - 1);
+  snprintf(server_saved, sizeof server_saved, "%s", full);
+  snprintf(server_, sizeof server_, "%s", full);
+  save_cfg();
+}
 int sync_enabled(void) { return strlen(code_) >= 4; }
 time_t sync_last(void) { return last_; }
 

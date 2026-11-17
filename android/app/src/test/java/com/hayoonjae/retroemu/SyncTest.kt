@@ -59,6 +59,13 @@ class SyncTest {
         assertEquals("73777b3b96824b5e9324ff1763175810", Sync.key("TEST-1234"))
     }
 
+    @Test fun normalizeAddress() {
+        assertEquals("http://192.168.0.5:8270/retro-sync", Sync.normalize("192.168.0.5:8270"))
+        assertEquals("http://192.168.0.5:8270/retro-sync", Sync.normalize(" http://192.168.0.5:8270/ "))
+        assertEquals("https://pi.taild4dc8e.ts.net/retro-sync", Sync.normalize("https://pi.taild4dc8e.ts.net/retro-sync"))
+        assertEquals(Sync.DEFAULT_SERVER, Sync.normalize(""))
+    }
+
     @Test fun serverDown() {
         val d = tmp()
         assertNull(Sync.syncDir(d, "http://127.0.0.1:1/retro-sync", code, "a.gb", pull = true))

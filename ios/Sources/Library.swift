@@ -59,6 +59,7 @@ struct LibraryView: View {
         SyncView(roms: model.games.map { $0.path }) { showSync = false }
       }
     }
+    .onAppear { if CommandLine.arguments.contains("--sync") { showSync = true } }  // 점검용
     .fileImporter(isPresented: $picking, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
       if case .success(let urls) = r { model.add(urls: urls) }
     }

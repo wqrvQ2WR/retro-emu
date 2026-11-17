@@ -22,6 +22,8 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleShortVersionString</key><string>0.1</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<!-- 저장 동기화: 같은 와이파이 맥·테일스케일 주소는 http 라서 -->
+<key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 P
 codesign --force --deep -s - "$APP" 2>&1 | tail -1

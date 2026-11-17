@@ -52,6 +52,9 @@
 - 롬은 파일 이름으로 맞춰요. 기기마다 롬 파일 이름이 같아야 해요.
 - 서버에 못 닿으면 그 기기 저장으로 그냥 시작하고, 다음에 닿을 때 맞춰요.
 - 코드를 아는 사람은 그 저장을 받을 수 있어요. 서버는 코드 자체는 모르고, 코드로 만든 해시만 봐요.
+- 서버 주소는 동기화 창에서 바꿔요.
+  - **같은 와이파이**: 맥에 서버를 깔고(`./sync-server/install-mac.sh`, 로그인하면 자동으로 켜짐) 다른 기기에 맥 주소(예: `192.168.0.10:8270`)를 넣어요. 맥 앱 동기화 창에 넣을 주소가 나오고, 맥 자신은 **이 맥** 버튼을 눌러요.
+  - **테일스케일**: 파이에 서버를 올리면(`./sync-server/deploy.sh`) **파이(테일스케일)** 버튼 주소로 밖에서도 돼요.
 
 ### 맥
 
@@ -219,7 +222,7 @@ mac/       SwiftUI 앱 + build-app.sh
 windows/   SDL2 앱(main.c) + build.sh(zig 교차 컴파일). 맥에서도 빌드돼서 화면 점검에 쓴다
 ios/       SwiftUI + UIKit 앱 + build.sh(swiftc). 터치 버튼은 UIView 하나가 여러 손가락을 같이 처리
 android/   Jetpack Compose 앱 + JNI(ndk-build). jni.c 가 rhost 와 SurfaceView 출력을 잇는다
-sync-server/ 저장 동기화 서버(server.py, 파이 배포 deploy.sh)
+sync-server/ 저장 동기화 서버(server.py, 맥 상주 install-mac.sh, 파이 배포 deploy.sh)
 assets/    앱 아이콘, 게임기 사진
 tests/     테스트용 패미컴 롬을 직접 만드는 스크립트(mk_nes.py)와 그 롬
 docs/      README 스크린샷

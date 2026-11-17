@@ -11,6 +11,10 @@
 void sync_init(const char *data_dir);
 const char *sync_code(void);
 void sync_set_code(const char *code);   // 앞뒤 공백 빼고 대문자로 저장
+// 서버 주소. 같은 와이파이의 맥(sync-server/install-mac.sh)이나 테일스케일 너머 파이 등.
+// "192.168.0.5:8270" 처럼 넣어도 http:// 와 /retro-sync 를 붙여 준다.
+const char *sync_server(void);
+void sync_set_server(const char *url);
 int sync_enabled(void);                 // 코드가 4글자 이상
 time_t sync_last(void);
 void sync_new_code(char out[10]);       // 예: K7PM-2QXA

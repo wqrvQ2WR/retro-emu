@@ -87,6 +87,8 @@ cat > $PL <<P
 <key>UIFileSharingEnabled</key><true/>
 <key>LSSupportsOpeningDocumentsInPlace</key><true/>
 <key>GCSupportsControllerUserInteraction</key><true/>
+<key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/><key>NSAllowsLocalNetworking</key><true/></dict>
+<key>NSLocalNetworkUsageDescription</key><string>같은 와이파이의 맥과 저장을 주고받아요.</string>
 <key>GCSupportedGameControllers</key><array><dict><key>ProfileName</key><string>ExtendedGamepad</string></dict></array>
 $ICON_KEYS
 </dict></plist>

@@ -53,6 +53,9 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 - ROMs are matched by file name, so use the same ROM file names on every device.
 - If the server can't be reached, the game starts with the local saves and syncs next time.
 - Anyone who knows the code can get those saves. The server never sees the code itself, only a hash of it.
+- Change the server address in the sync window.
+  - **Same Wi-Fi**: install the server on a Mac (`./sync-server/install-mac.sh`, starts at login) and enter the Mac's address (e.g. `192.168.0.10:8270`) on the other devices. The Mac app's sync window shows the address to use, and the Mac itself uses the **이 맥** (This Mac) button.
+  - **Tailscale**: once the server is on the Pi (`./sync-server/deploy.sh`), the **파이(테일스케일)** (Pi) button's address works from anywhere.
 
 ### macOS
 
@@ -220,7 +223,7 @@ mac/       SwiftUI app + build-app.sh, make-dmg.sh
 windows/   SDL2 app (main.c) + build.sh (zig cross-compile). Also builds on macOS for UI checks
 ios/       SwiftUI + UIKit app + build.sh (swiftc). One UIView handles all touch buttons, multi-touch included
 android/   Jetpack Compose app + JNI (ndk-build). jni.c connects rhost to SurfaceView output
-sync-server/ Save sync server (server.py, Pi deploy.sh)
+sync-server/ Save sync server (server.py, Mac install-mac.sh, Pi deploy.sh)
 assets/    App icon, console photos
 tests/     Script that generates a test NES ROM (mk_nes.py) and the ROM itself
 docs/      README screenshots

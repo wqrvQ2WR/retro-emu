@@ -9,6 +9,9 @@ struct SyncView: View {
   @State private var status = ""
   @State private var busy = false
   @State private var last = Sync.lastSync
+  @State private var server = Sync.server
+  /// 이 맥에서 서버가 돌면 다른 기기에 알려줄 주소
+  @State private var lanURL: String?
 
   static let fmt: DateFormatter = {
     let f = DateFormatter(); f.locale = Locale(identifier: "ko_KR"); f.dateFormat = "M월 d일 a h:mm"; return f
@@ -43,8 +46,27 @@ struct SyncView: View {
           .font(.system(size: 11)).foregroundColor(.black.opacity(0.5)).fixedSize(horizontal: false, vertical: true)
       }
 
+      VStack(alignment: .leading, spacing: 8) {
+        Text("서버 주소").font(.system(size: 13, weight: .bold)).foregroundColor(.black.opacity(0.7))
+        TextField("http://192.168.0.10:8270/retro-sync", text: $server)
+          .textFieldStyle(.plain)
+          .font(.system(size: 13, weight: .semibold, design: .monospaced))
+          .foregroundColor(.black.opacity(0.85))
+          .padding(.horizontal, 12).padding(.vertical, 8)
+          .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
+          .autocorrectionDisabled()
+        HStack(spacing: 8) {
+          if lanURL != nil { pill("이 맥", filled: false) { server = "http://127.0.0.1:8270/retro-sync" } }
+          pill("파이(테일스케일)", filled: false) { server = Sync.defaultServer }
+        }
+        Text(lanURL.map { "이 맥이 서버예요. 같은 와이파이의 다른 기기엔 \($0) 를 넣으세요." }
+             ?? "같은 와이파이면 서버를 깐 맥의 주소(예: 192.168.0.10:8270)를, 테일스케일을 쓰면 파이 주소를 넣어요.")
+          .font(.system(size: 11)).foregroundColor(.black.opacity(0.5)).fixedSize(horizontal: false, vertical: true)
+          .textSelection(.enabled)
+      }
+
       HStack(spacing: 8) {
-        pill(Sync.enabled && Sync.code == norm(code) ? "저장됨" : "코드 저장", filled: true) { apply() }
+        pill(Sync.enabled && Sync.code == norm(code) && Sync.server == Sync.normalize(server) ? "저장됨" : "저장", filled: true) { apply() }
           .disabled(norm(code).count < 4 || busy)
           .opacity(norm(code).count < 4 ? 0.4 : 1)
         pill("지금 맞추기", filled: false) { syncNow() }
@@ -60,6 +82,14 @@ struct SyncView: View {
     }
     .padding(20)
     .frame(maxWidth: 520)
+    .onAppear {
+      #if os(macOS) || targetEnvironment(macCatalyst)
+      DispatchQueue.global().async {
+        let up = Sync.localServerUp(), ip = Sync.lanAddress()
+        DispatchQueue.main.async { if up, let ip { lanURL = "http://\(ip):8270/retro-sync" } }
+      }
+      #endif
+    }
     .background(bgGradient, in: RoundedRectangle(cornerRadius: 22))
     .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
     .padding(18)
@@ -70,6 +100,8 @@ struct SyncView: View {
   func apply() {
     Sync.code = code
     code = Sync.code
+    Sync.server = server
+    server = Sync.server
     syncNow()
   }
 
