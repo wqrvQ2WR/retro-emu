@@ -12,6 +12,15 @@ enum class GameSystem(val title: String, val coreLib: String, val exts: List<Str
     MD("메가드라이브", "genesis_plus_gx_core", listOf("md", "gen", "smd"), listOf(Color(0xFF1F8CFF), Color(0xFF33D9E6))),
     PS1("플레이스테이션", "pcsx_rearmed_core", listOf("cue", "chd", "pbp", "m3u"), listOf(Color(0xFFFFB81A), Color(0xFFFF6133)));
 
+    /** 카드에 넣는 게임기 사진(퍼블릭 도메인, assets/consoles/CREDITS.md) */
+    val photo get() = when (this) {
+        NES -> R.drawable.console_nes; GB -> R.drawable.console_gb; GBC -> R.drawable.console_gbc
+        GBA -> R.drawable.console_gba; SNES -> R.drawable.console_snes; MD -> R.drawable.console_md
+        PS1 -> R.drawable.console_ps1
+    }
+    /** 세로로 긴 휴대용 기기는 덜 넓게 */
+    val tallPhoto get() = this == GB || this == GBC
+
     val hasXY get() = this == SNES || this == MD || this == PS1
     val hasShoulders get() = this == GBA || this == SNES || this == PS1
     val hasTriggers get() = this == PS1

@@ -8,6 +8,7 @@ rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/cores"
 cp .build/release/RetroEmu "$APP/Contents/MacOS/"
 cp cores/mac/*.dylib "$APP/Contents/Resources/cores/"
 cp assets/AppIcon.icns "$APP/Contents/Resources/"
+mkdir -p "$APP/Contents/Resources/consoles"; cp assets/consoles/*.png "$APP/Contents/Resources/consoles/"
 cat > "$APP/Contents/Info.plist" <<P
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

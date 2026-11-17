@@ -93,13 +93,23 @@ struct LibraryView: View {
 struct GameCard: View {
   let game: Game
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Spacer(minLength: 0)
-      Text(game.system.title).font(.system(size: 12, weight: .bold)).foregroundColor(.white.opacity(0.9))
-      Text(game.title).font(.system(size: 17, weight: .heavy)).foregroundColor(.white).lineLimit(2)
+    ZStack(alignment: .bottomLeading) {
+      // 게임기 사진: 오른쪽 위, 글자와 안 겹치게
+      if let img = game.system.photo {
+        GeometryReader { g in
+          Image(nsImage: img).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+            .frame(width: g.size.width * (game.system.tallPhoto ? 0.40 : 0.70), height: game.system.tallPhoto ? 92 : 78, alignment: .topTrailing)
+            .shadow(color: .black.opacity(0.18), radius: 6, y: 3)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        }
+      }
+      VStack(alignment: .leading, spacing: 4) {
+        Text(game.system.title).font(.system(size: 12, weight: .bold)).foregroundColor(.white.opacity(0.9))
+        Text(game.title).font(.system(size: 17, weight: .heavy)).foregroundColor(.white).lineLimit(2)
+      }
     }
-    .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
-    .padding(16)
+    .frame(maxWidth: .infinity, minHeight: 150, maxHeight: 150, alignment: .leading)
+    .padding(14)
     .background(LinearGradient(colors: game.system.gradient, startPoint: .topLeading, endPoint: .bottomTrailing),
                 in: RoundedRectangle(cornerRadius: 20))
     .shadow(color: game.system.gradient[0].opacity(0.35), radius: 10, y: 5)

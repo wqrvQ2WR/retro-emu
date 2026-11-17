@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 지원하는 기종. 확장자로 기종과 코어를 고른다.
@@ -39,6 +40,18 @@ enum GameSystem: String, CaseIterable, Codable, Identifiable {
     case .ps1: return ["cue", "chd", "pbp", "m3u"]
     }
   }
+
+  /// 카드에 넣는 게임기 사진(퍼블릭 도메인, assets/consoles/CREDITS.md). 앱 Resources/consoles 에 들어간다.
+  var photo: NSImage? {
+    GameSystem.photoCache[self] ?? {
+      let img = Bundle.main.resourcePath.flatMap { NSImage(contentsOfFile: $0 + "/consoles/\(rawValue).png") }
+      GameSystem.photoCache[self] = img
+      return img
+    }()
+  }
+  private static var photoCache: [GameSystem: NSImage?] = [:]
+  /// 세로로 긴 휴대용 기기
+  var tallPhoto: Bool { self == .gb || self == .gbc }
 
   var gradient: [Color] {
     switch self {

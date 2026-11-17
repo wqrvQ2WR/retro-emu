@@ -151,14 +151,24 @@ fun Library(games: List<File>, onPlay: (File) -> Unit, onAdd: () -> Unit, onDele
                     verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
                     items(games, key = { it.name }) { f ->
                         val sys = GameSystem.of(f)!!
-                        Column(
-                            Modifier.fillMaxWidth().heightIn(min = 104.dp).clip(RoundedCornerShape(20.dp))
+                        Box(
+                            Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(20.dp))
                                 .background(Brush.linearGradient(sys.colors))
-                                .combinedClickable(onClick = { onPlay(f) }, onLongClick = { del = f }).padding(14.dp),
-                            verticalArrangement = Arrangement.Bottom
+                                .combinedClickable(onClick = { onPlay(f) }, onLongClick = { del = f })
                         ) {
-                            Text(sys.title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xE6FFFFFF))
-                            Text(f.nameWithoutExtension, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 2)
+                            // 게임기 사진: 오른쪽 위, 글자와 안 겹치게
+                            androidx.compose.foundation.Image(
+                                androidx.compose.ui.res.painterResource(sys.photo), sys.title,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                                alignment = Alignment.TopEnd,
+                                modifier = Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp)
+                                    .fillMaxWidth(if (sys.tallPhoto) 0.42f else 0.72f).height(if (sys.tallPhoto) 82.dp else 70.dp)
+                            )
+                            Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
+                                Text(sys.title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xE6FFFFFF))
+                                Text(f.nameWithoutExtension, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.White,
+                                    maxLines = 2, lineHeight = 19.sp)
+                            }
                         }
                     }
                 }
