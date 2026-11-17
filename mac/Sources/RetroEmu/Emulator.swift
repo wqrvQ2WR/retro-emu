@@ -23,6 +23,9 @@ final class Emulator {
 
   /// 키보드 입력 비트마스크(메인 스레드에서 쓰고 큐에서 읽음)
   var keyMask: UInt32 = 0
+  /// 오른쪽 스틱용 키(I/J/K/L) 상태: 위·아래·왼·오 비트 0~3
+  var rightKeys: UInt32 = 0
+  private var system: GameSystem = .nes
   /// 새 영상이 나오면 호출(메인 스레드)
   var onFrame: ((CGImage, Double) -> Void)?
   var onToast: ((String) -> Void)?
@@ -46,6 +49,8 @@ final class Emulator {
       let saves = Emulator.supportDir.appendingPathComponent("saves").path
       try? FileManager.default.createDirectory(atPath: sys, withIntermediateDirectories: true)
       try? FileManager.default.createDirectory(atPath: saves, withIntermediateDirectories: true)
+      self.system = system
+      Emulator.installAssets(system, sysDir: sys)
       guard rh_open(core, sys, saves) != 0, rh_load(rom) != 0 else {
         err = String(cString: rh_error())
         rh_close()
@@ -162,7 +167,31 @@ final class Emulator {
 
   private func tick() {
     if paused { return }
-    rh_set_input(keyMask | padMask())
+    var keys = keyMask
+    // 키보드: 스틱이 주된 기종은 방향키를 왼쪽 스틱으로, I/J/K/L 은 오른쪽 스틱(N64 는 C 버튼)
+    var lx = 0.0, ly = 0.0
+    if system.stickFirst {
+      let dirs: UInt32 = (1 << UInt32(RH_UP)) | (1 << UInt32(RH_DOWN)) | (1 << UInt32(RH_LEFT)) | (1 << UInt32(RH_RIGHT))
+      if keys & (1 << UInt32(RH_LEFT)) != 0 { lx -= 1 }
+      if keys & (1 << UInt32(RH_RIGHT)) != 0 { lx += 1 }
+      if keys & (1 << UInt32(RH_UP)) != 0 { ly -= 1 }
+      if keys & (1 << UInt32(RH_DOWN)) != 0 { ly += 1 }
+      keys &= ~dirs
+    }
+    var rx = 0.0, ry = 0.0
+    if rightKeys & 1 != 0 { ry -= 1 }
+    if rightKeys & 2 != 0 { ry += 1 }
+    if rightKeys & 4 != 0 { rx -= 1 }
+    if rightKeys & 8 != 0 { rx += 1 }
+    // 게임패드 스틱이 더 크게 기울었으면 그걸 쓴다
+    if let pad = GCController.controllers().first?.extendedGamepad {
+      let pl = pad.leftThumbstick, pr = pad.rightThumbstick
+      if abs(Double(pl.xAxis.value)) + abs(Double(pl.yAxis.value)) > abs(lx) + abs(ly) { lx = Double(pl.xAxis.value); ly = -Double(pl.yAxis.value) }
+      if abs(Double(pr.xAxis.value)) + abs(Double(pr.yAxis.value)) > abs(rx) + abs(ry) { rx = Double(pr.xAxis.value); ry = -Double(pr.yAxis.value) }
+    }
+    rh_set_analog(0, lx, ly)
+    rh_set_analog(1, rx, ry)
+    rh_set_input(keys | padMask(stick: !system.hasAnalog))
     rh_run()
     framesRun += 1
     sramTick += 1
@@ -189,7 +218,19 @@ final class Emulator {
   }
 
   /// 게임패드: 버튼 위치 기준으로 (아래=B, 오른쪽=A, 왼쪽=Y, 위=X)
-  private func padMask() -> UInt32 {
+  /// DS 아래 화면 터치(마우스). x·y 는 게임 그림 기준 0~1
+  func setPointer(_ x: Double, _ y: Double, _ down: Bool) { queue.async { rh_set_pointer(x, y, down ? 1 : 0) } }
+
+  /// PSP·게임큐브 코어가 쓰는 자료를 처음 한 번 시스템 폴더에 복사한다(앱 Resources/sysassets)
+  static func installAssets(_ system: GameSystem, sysDir: String) {
+    guard let name = system.sysAssets, let res = Bundle.main.resourcePath else { return }
+    let dst = sysDir + "/" + name, src = res + "/sysassets/" + name
+    let fm = FileManager.default
+    if fm.fileExists(atPath: dst) || !fm.fileExists(atPath: src) { return }
+    try? fm.copyItem(atPath: src, toPath: dst)
+  }
+
+  private func padMask(stick: Bool = true) -> UInt32 {
     guard let pad = GCController.controllers().first?.extendedGamepad else { return 0 }
     var m: UInt32 = 0
     func set(_ b: GCControllerButtonInput, _ id: Int) { if b.isPressed { m |= 1 << UInt32(id) } }
@@ -199,6 +240,7 @@ final class Emulator {
     set(pad.buttonMenu, RH_START)
     if let o = pad.buttonOptions { set(o, RH_SELECT) }
     set(pad.dpad.up, RH_UP); set(pad.dpad.down, RH_DOWN); set(pad.dpad.left, RH_LEFT); set(pad.dpad.right, RH_RIGHT)
+    guard stick else { return m }
     let x = pad.leftThumbstick.xAxis.value, y = pad.leftThumbstick.yAxis.value
     if x < -0.5 { m |= 1 << UInt32(RH_LEFT) }
     if x > 0.5 { m |= 1 << UInt32(RH_RIGHT) }
@@ -221,6 +263,11 @@ final class Emulator {
     eng.attach(src)
     eng.connect(src, to: eng.mainMixerNode, format: fmt)
     do { try eng.start(); engine = eng } catch { NSLog("audio fail: \(error)") }
+  }
+
+  /// I/J/K/L -> 오른쪽 스틱 비트(위·아래·왼·오)
+  static func rightStickBit(forKeyCode k: UInt16) -> UInt32? {
+    switch k { case 34: return 1; case 40: return 2; case 38: return 4; case 37: return 8; default: return nil }
   }
 
   /// 키보드 키코드 -> 조이패드 비트

@@ -40,6 +40,25 @@ int rh_audio_buffered(void);
 // 입력: 비트마스크 (1 << RH_*)
 void rh_set_input(uint32_t mask);
 
+// 아날로그 스틱(N64·게임큐브·PSP·PS2): stick 0=왼쪽 1=오른쪽, x·y 는 -1~1(아래·오른쪽이 +)
+void rh_set_analog(int stick, double x, double y);
+
+// 터치(DS 아래 화면 등): 코어가 낸 화면(rh_video 의 그림) 기준 0~1 좌표. 손을 떼면 pressed=0.
+void rh_set_pointer(double x, double y, int pressed);
+
+// OpenGL 로 그리는 코어(PSP)용. 앱이 컨텍스트를 만들어 준다.
+// 맥과 안드로이드는 rhost 가 직접 만들어서(CGL, EGL) 따로 안 넣어도 된다.
+// rhost 는 코어를 부를 때마다 make_current(1), 끝나면 make_current(0) 을 부른다(스레드가 바뀌어도 되게).
+typedef struct {
+  int (*create)(int gles, int major, int minor);   // gles: 0=데스크탑 GL(major>=3 이면 코어 프로필), 1=GLES. 성공하면 1
+  void (*make_current)(int on);
+  void *(*get_proc)(const char *name);
+  void (*destroy)(void);
+} rh_gl_provider;
+void rh_set_gl_provider(const rh_gl_provider *p);
+// 지금 코어가 OpenGL 로 그리는지
+int rh_uses_gl(void);
+
 // 세이브 스테이트 / 배터리 세이브(SRAM)
 size_t rh_state_size(void);
 int rh_state_save(const char *path);

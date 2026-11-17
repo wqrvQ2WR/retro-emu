@@ -133,6 +133,19 @@ struct GameCard: View {
 
 final class GameNSView: NSView {
   var onKey: ((UInt16, Bool) -> Void)?
+  /// 마우스로 누른 자리(게임 그림 기준 0~1, 위가 0)
+  var onPointer: ((Double, Double, Bool) -> Void)?
+  var imageSize = CGSize(width: 4, height: 3)
+  private func pointer(_ e: NSEvent, _ down: Bool) {
+    let p = convert(e.locationInWindow, from: nil), b = bounds.size
+    let s = min(b.width / imageSize.width, b.height / imageSize.height)
+    let w = imageSize.width * s, h = imageSize.height * s
+    let x = (p.x - (b.width - w) / 2) / w, y = 1 - (p.y - (b.height - h) / 2) / h
+    onPointer?(x, y, down && x >= 0 && x <= 1 && y >= 0 && y <= 1)
+  }
+  override func mouseDown(with e: NSEvent) { pointer(e, true) }
+  override func mouseDragged(with e: NSEvent) { pointer(e, true) }
+  override func mouseUp(with e: NSEvent) { pointer(e, false) }
   override var acceptsFirstResponder: Bool { true }
   override func viewDidMoveToWindow() { window?.makeFirstResponder(self) }
   override func keyDown(with e: NSEvent) { if !e.isARepeat { onKey?(e.keyCode, true) } }
@@ -153,12 +166,15 @@ struct GameSurface: NSViewRepresentable {
     v.layer?.magnificationFilter = .nearest
     v.layer?.minificationFilter = .linear
     v.layer?.contentsGravity = .resizeAspect
+    v.onPointer = { x, y, down in emu.setPointer(x, y, down && !context.coordinator.panelOpen) }
     v.onKey = { code, down in
-      if let b = Emulator.bit(forKeyCode: code), !context.coordinator.panelOpen {
+      if let r = Emulator.rightStickBit(forKeyCode: code), !context.coordinator.panelOpen {
+        if down { emu.rightKeys |= r } else { emu.rightKeys &= ~r }
+      } else if let b = Emulator.bit(forKeyCode: code), !context.coordinator.panelOpen {
         if down { emu.keyMask |= b } else { emu.keyMask &= ~b }
       } else if down { onSpecial(code) }
     }
-    emu.onFrame = { [weak v] img, _ in v?.layer?.contents = img }
+    emu.onFrame = { [weak v] img, _ in v?.layer?.contents = img; v?.imageSize = CGSize(width: img.width, height: img.height) }
     return v
   }
   func updateNSView(_ v: GameNSView, context: Context) {

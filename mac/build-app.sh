@@ -9,6 +9,8 @@ cp .build/release/RetroEmu "$APP/Contents/MacOS/"
 cp cores/mac/*.dylib "$APP/Contents/Resources/cores/"
 cp assets/AppIcon.icns "$APP/Contents/Resources/"
 mkdir -p "$APP/Contents/Resources/consoles"; cp assets/consoles/*.png "$APP/Contents/Resources/consoles/"
+# PSP·게임큐브 코어가 처음 켤 때 시스템 폴더로 복사해 가는 자료
+[ -d cores/sysassets ] && cp -R cores/sysassets "$APP/Contents/Resources/"
 cat > "$APP/Contents/Info.plist" <<P
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
