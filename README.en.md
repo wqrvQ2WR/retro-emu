@@ -60,6 +60,15 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 
 ### Pause menu and controls (macOS, Windows)
 
+<p>
+  <img src="docs/mac-menu.png" width="49%" alt="Pause menu on macOS">
+  <img src="docs/mac-controls.png" width="49%" alt="Controls screen on macOS (Nintendo 64)">
+</p>
+<p>
+  <img src="docs/windows-menu.png" width="49%" alt="Pause menu on Windows">
+  <img src="docs/windows-controls.png" width="49%" alt="Controls screen on Windows (SNES)">
+</p>
+
 - Pressing **Esc** in a game no longer quits. It opens a pause menu: **resume, save/load, controls, quit**. Esc again goes back to the game. On a controller, Select+Start opens it.
 - **Controls** lists every button of the current system with the key bound to it. Button names come straight from the core, so each system shows its own names (Cross/Circle on PSP, C Buttons and Z Trigger on N64, Z on GameCube, and so on).
 - Click a row (or pick it with the arrow keys and press Enter), then press the new key. If another button was using that key, that button is cleared. Esc cancels.
@@ -67,6 +76,10 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 - Esc, F1, F2 and F3 (plus F11 on Windows) are reserved for menus and can't be bound to game buttons.
 
 ### Game lock
+
+<p>
+  <img src="docs/ios-lock.png" width="25%" alt="Locked game in the iOS library">
+</p>
 
 Games used to be expensive, so you bought one and played it to the end. With a pile of ROMs it's easy to just sample everything, so this feature brings back that **one game at a time** focus.
 
