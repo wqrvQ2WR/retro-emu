@@ -118,7 +118,7 @@ struct LibraryView: View {
 }
 
 /// 잠금을 풀 때 보여 주는 경고(네 앱 모두 같은 문구)
-let lockWarning = "잠금을 풀면 누구나 바로 켜서 할 수 있어요. 게임 시간을 지키려고 잠가 둔 거라면 풀지 마세요."
+let lockWarning = "예전엔 게임이 비싸서 하나를 끝까지 파고들었죠. 잠금을 풀면 그 맛이 흐려져요. 지금 하는 게임을 충분히 즐긴 뒤에 푸는 걸 추천해요."
 
 struct GameCard: View {
   let game: Game
