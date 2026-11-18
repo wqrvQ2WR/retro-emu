@@ -135,12 +135,31 @@ final class GameNSView: NSView {
   var onKey: ((UInt16, Bool) -> Void)?
   /// 마우스로 누른 자리(게임 그림 기준 0~1, 위가 0)
   var onPointer: ((Double, Double, Bool) -> Void)?
-  var imageSize = CGSize(width: 4, height: 3)
+  /// 화면 비율(가로/세로). 코어가 알려 준 값이라 그림 픽셀 크기와 다를 수 있다(N64 640x240 은 4:3).
+  var aspect: Double = 4.0 / 3.0 { didSet { if abs(aspect - oldValue) > 0.001 { needsLayout = true } } }
+  let screen = CALayer()
+  func show(_ img: CGImage, aspect a: Double) {
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    screen.contents = img
+    CATransaction.commit()
+    aspect = a > 0.1 ? a : Double(img.width) / Double(max(img.height, 1))
+  }
+  /// 비율을 지켜 가운데 맞춘 그림 자리
+  var screenRect: CGRect {
+    let b = bounds.size
+    var w = b.width, h = w / aspect
+    if h > b.height { h = b.height; w = h * aspect }
+    return CGRect(x: (b.width - w) / 2, y: (b.height - h) / 2, width: w, height: h)
+  }
+  override func layout() {
+    super.layout()
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    screen.frame = screenRect
+    CATransaction.commit()
+  }
   private func pointer(_ e: NSEvent, _ down: Bool) {
-    let p = convert(e.locationInWindow, from: nil), b = bounds.size
-    let s = min(b.width / imageSize.width, b.height / imageSize.height)
-    let w = imageSize.width * s, h = imageSize.height * s
-    let x = (p.x - (b.width - w) / 2) / w, y = 1 - (p.y - (b.height - h) / 2) / h
+    let p = convert(e.locationInWindow, from: nil), r = screenRect
+    let x = (p.x - r.minX) / r.width, y = 1 - (p.y - r.minY) / r.height
     onPointer?(x, y, down && x >= 0 && x <= 1 && y >= 0 && y <= 1)
   }
   override func mouseDown(with e: NSEvent) { pointer(e, true) }
@@ -163,9 +182,10 @@ struct GameSurface: NSViewRepresentable {
     let v = GameNSView()
     v.wantsLayer = true
     v.layer?.backgroundColor = NSColor.black.cgColor
-    v.layer?.magnificationFilter = .nearest
-    v.layer?.minificationFilter = .linear
-    v.layer?.contentsGravity = .resizeAspect
+    v.screen.magnificationFilter = .nearest
+    v.screen.minificationFilter = .linear
+    v.screen.contentsGravity = .resize
+    v.layer?.addSublayer(v.screen)
     v.onPointer = { x, y, down in emu.setPointer(x, y, down && !context.coordinator.panelOpen) }
     v.onKey = { code, down in
       if let r = Emulator.rightStickBit(forKeyCode: code), !context.coordinator.panelOpen {
@@ -174,7 +194,7 @@ struct GameSurface: NSViewRepresentable {
         if down { emu.keyMask |= b } else { emu.keyMask &= ~b }
       } else if down { onSpecial(code) }
     }
-    emu.onFrame = { [weak v] img, _ in v?.layer?.contents = img; v?.imageSize = CGSize(width: img.width, height: img.height) }
+    emu.onFrame = { [weak v] img, a in v?.show(img, aspect: a) }
     return v
   }
   func updateNSView(_ v: GameNSView, context: Context) {

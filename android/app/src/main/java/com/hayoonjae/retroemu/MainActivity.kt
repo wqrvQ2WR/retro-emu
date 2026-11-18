@@ -84,9 +84,19 @@ fun Root() {
     var playing by remember { mutableStateOf<File?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
+    // 가져오기는 몇 GB 짜리도 있어서 백그라운드에서 하고 진행만 보여 준다
+    var importing by remember { mutableStateOf<String?>(null) }
+    val importScope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        uris.forEach { copyIn(ctx, it) }
-        games = listGames(ctx)
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        importScope.launch {
+            uris.forEachIndexed { i, u ->
+                importing = "가져오는 중 ${i + 1}/${uris.size}"
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { copyIn(ctx, u) } }
+                games = listGames(ctx)
+            }
+            importing = null
+        }
     }
 
     val p = playing
@@ -98,6 +108,14 @@ fun Root() {
                 // .cue 를 지우면 그게 가리키는 .bin 도 같이 지운다
                 if (f.extension.equals("cue", true)) GameSystem.cueReferenced(f.parentFile).forEach { File(f.parentFile, it).delete() }
                 f.delete(); games = listGames(ctx) })
+    }
+    importing?.let { msg ->
+        AlertDialog(onDismissRequest = {}, confirmButton = {},
+            title = { Text(msg) },
+            text = { Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 3.dp, color = Violet)
+                Spacer(Modifier.width(12.dp)); Text("큰 게임은 몇 분 걸려요")
+            } })
     }
     error?.let {
         AlertDialog(onDismissRequest = { error = null }, confirmButton = { TextButton(onClick = { error = null }) { Text("확인") } },
@@ -130,7 +148,10 @@ private fun copyIn(ctx: android.content.Context, uri: Uri) {
         return
     }
     if (!isRomName(name)) return
-    ctx.contentResolver.openInputStream(uri)?.use { i -> File(dir, name).outputStream().use { o -> i.copyTo(o) } }
+    // 다 받은 뒤에 이름을 붙여서, 도중에 꺼져도 반쪽짜리 게임이 목록에 안 뜨게 한다
+    val tmp = File(dir, "$name.part")
+    ctx.contentResolver.openInputStream(uri)?.use { i -> tmp.outputStream().use { o -> i.copyTo(o, 1 shl 20) } }
+    if (!tmp.renameTo(File(dir, name))) tmp.delete()
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -181,7 +202,7 @@ fun Library(games: List<File>, onPlay: (File) -> Unit, onAdd: () -> Unit, onDele
                             )
                             Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
                                 Text(sys.title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xE6FFFFFF))
-                                Text(f.nameWithoutExtension, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.White,
+                                Text(f.nameWithoutExtension.removeSuffix(".nkit"), fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.White,
                                     maxLines = 2, lineHeight = 19.sp)
                             }
                         }
@@ -195,7 +216,7 @@ fun Library(games: List<File>, onPlay: (File) -> Unit, onAdd: () -> Unit, onDele
         AlertDialog(onDismissRequest = { del = null },
             confirmButton = { TextButton(onClick = { onDelete(f); del = null }) { Text("지우기") } },
             dismissButton = { TextButton(onClick = { del = null }) { Text("취소") } },
-            title = { Text(f.nameWithoutExtension) }, text = { Text("목록에서 지우고 앱 안의 롬 파일도 삭제해요.") })
+            title = { Text(f.nameWithoutExtension.removeSuffix(".nkit")) }, text = { Text("목록에서 지우고 앱 안의 롬 파일도 삭제해요.") })
     }
 }
 
@@ -421,13 +442,10 @@ fun Screen(engine: Engine, sys: GameSystem) {
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { c ->
             android.view.SurfaceView(c).apply {
-                // DS 아래 화면 터치: 네이티브가 정수배로 가운데에 그리므로 같은 자리로 계산한다
+                // DS 아래 화면 터치: 버퍼는 합성기가 뷰 전체로 늘리고, 뷰는 게임 비율이라 뷰 기준으로 계산한다
                 if (sys.hasTouch) setOnTouchListener { v, e ->
-                    val sz = Native.size()
-                    if (sz != null && v.width > 0) {
-                        val s = maxOf(1, minOf(v.width / sz[0], v.height / sz[1]))
-                        val w = sz[0] * s; val h = sz[1] * s
-                        val x = (e.x - (v.width - w) / 2f) / w; val y = (e.y - (v.height - h) / 2f) / h
+                    if (v.width > 0 && v.height > 0) {
+                        val x = e.x / v.width; val y = e.y / v.height
                         val down = e.actionMasked != android.view.MotionEvent.ACTION_UP && e.actionMasked != android.view.MotionEvent.ACTION_CANCEL
                         engine.setPointer(x, y, down && x in 0f..1f && y in 0f..1f)
                     }
