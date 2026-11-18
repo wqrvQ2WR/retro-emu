@@ -32,6 +32,8 @@ uint64_t rh_video_serial(void);
 double rh_fps(void);
 double rh_sample_rate(void);
 double rh_aspect(void);
+/// 코어가 알려 준 버튼 이름(0~15 패드 버튼, 16~19 오른쪽 스틱). 없으면 NULL.
+const char *rh_button_name(int id);
 
 // 소리: 스테레오 16비트. 요청한 프레임 수만큼 읽고 모자라면 0으로 채운다. 읽은 프레임 수를 돌려준다.
 int rh_audio_read(int16_t *out, int frames);

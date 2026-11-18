@@ -15,6 +15,15 @@ final class AppModel: ObservableObject {
   @Published var games: [Game] = []
   @Published var playing: Game?
   @Published var error: String?
+  /// 잠긴 게임(롬 파일 이름). 잠긴 건 눌러도 안 켜진다.
+  @Published var locked: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "locks") ?? [])
+
+  func isLocked(_ g: Game) -> Bool { locked.contains((g.path as NSString).lastPathComponent) }
+  func setLocked(_ g: Game, _ on: Bool) {
+    let n = (g.path as NSString).lastPathComponent
+    if on { locked.insert(n) } else { locked.remove(n) }
+    UserDefaults.standard.set(Array(locked).sorted(), forKey: "locks")
+  }
 
   static var romsDir: URL {
     let u = Emulator.supportDir.appendingPathComponent("roms")

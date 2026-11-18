@@ -26,6 +26,9 @@ final class Emulator {
   /// 오른쪽 스틱용 키(I/J/K/L) 상태: 위·아래·왼·오 비트 0~3
   var rightKeys: UInt32 = 0
   private var system: GameSystem = .nes
+  var currentSystem: GameSystem { system }
+  /// 키 -> 동작(KeyMap). 메인 스레드에서 쓴다.
+  var keyLookup: [UInt16: Int] = [:]
   /// 새 영상이 나오면 호출(메인 스레드)
   var onFrame: ((CGImage, Double) -> Void)?
   var onToast: ((String) -> Void)?
@@ -50,6 +53,7 @@ final class Emulator {
       try? FileManager.default.createDirectory(atPath: sys, withIntermediateDirectories: true)
       try? FileManager.default.createDirectory(atPath: saves, withIntermediateDirectories: true)
       self.system = system
+      DispatchQueue.main.async { self.keyLookup = KeyMap.lookup(KeyMap.load(system)) }
       Emulator.installAssets(system, sysDir: sys)
       guard rh_open(core, sys, saves) != 0, rh_load(rom) != 0 else {
         err = String(cString: rh_error())
@@ -266,32 +270,6 @@ final class Emulator {
   }
 
   /// I/J/K/L -> 오른쪽 스틱 비트(위·아래·왼·오)
-  static func rightStickBit(forKeyCode k: UInt16) -> UInt32? {
-    switch k { case 34: return 1; case 40: return 2; case 38: return 4; case 37: return 8; default: return nil }
-  }
-
-  /// 키보드 키코드 -> 조이패드 비트
-  static func bit(forKeyCode k: UInt16) -> UInt32? {
-    let id: Int
-    switch k {
-    case 126: id = RH_UP
-    case 125: id = RH_DOWN
-    case 123: id = RH_LEFT
-    case 124: id = RH_RIGHT
-    case 6: id = RH_B        // Z
-    case 7: id = RH_A        // X
-    case 0: id = RH_Y        // A
-    case 1: id = RH_X        // S
-    case 12: id = RH_L       // Q
-    case 13: id = RH_R       // W
-    case 14: id = RH_L2      // E
-    case 15: id = RH_R2      // R
-    case 36: id = RH_START   // Return
-    case 51, 48: id = RH_SELECT // Delete, Tab
-    default: return nil
-    }
-    return 1 << UInt32(id)
-  }
 }
 
 struct SaveSlot: Identifiable {

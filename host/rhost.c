@@ -265,6 +265,23 @@ static void remember_vars(const struct retro_variable *v) {
   }
 }
 
+// 코어가 알려 준 버튼 이름(1번 패드). 조작법 화면에 그대로 보여 준다.
+// 0~15: 패드 버튼, 16~19: 오른쪽 스틱 위·아래·왼쪽·오른쪽(이름은 스틱 하나에 하나)
+static char g_desc[20][64];
+static void remember_desc(const void *data) {
+  memset(g_desc, 0, sizeof g_desc);
+  for (const struct retro_input_descriptor *d = data; d && d->description; d++) {
+    if (d->port != 0) continue;
+    int slot = -1;
+    if (d->device == RETRO_DEVICE_JOYPAD && d->id < 16) slot = (int)d->id;
+    else if (d->device == RETRO_DEVICE_ANALOG && d->index == RETRO_DEVICE_INDEX_ANALOG_RIGHT) slot = 16 + (d->id == RETRO_DEVICE_ID_ANALOG_X ? 2 : 0);
+    if (slot < 0 || g_desc[slot][0]) continue;
+    snprintf(g_desc[slot], sizeof g_desc[slot], "%s", d->description);
+    if (slot >= 16) snprintf(g_desc[slot + 1], sizeof g_desc[slot], "%s", d->description);
+  }
+}
+const char *rh_button_name(int id) { return id >= 0 && id < 20 && g_desc[id][0] ? g_desc[id] : NULL; }
+
 static bool env_cb(unsigned cmd, void *data) {
   switch (cmd) {
   case RETRO_ENVIRONMENT_GET_CAN_DUPE: *(bool *)data = true; return true;
@@ -273,7 +290,7 @@ static bool env_cb(unsigned cmd, void *data) {
   case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY: *(const char **)data = g_save; return true;
   case RETRO_ENVIRONMENT_GET_LIBRETRO_PATH: return false;
   case RETRO_ENVIRONMENT_GET_LOG_INTERFACE: ((struct retro_log_callback *)data)->log = log_cb; return true;
-  case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS: return true;
+  case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS: remember_desc(data); return true;
   case RETRO_ENVIRONMENT_SET_VARIABLES: remember_vars(data); return true;
   case RETRO_ENVIRONMENT_GET_VARIABLE: { // 몇 개만 바꾸고 나머지는 코어 기본값
     struct retro_variable *v = data;
@@ -584,7 +601,7 @@ void rh_close(void) {
     hw_teardown();
     lib_close(C.lib);
   }
-  g_hw_wanted = 0; g_ptr_down = 0; memset(g_axis, 0, sizeof g_axis);
+  g_hw_wanted = 0; g_ptr_down = 0; memset(g_axis, 0, sizeof g_axis); memset(g_desc, 0, sizeof g_desc);
   memset(&C, 0, sizeof C);
   g_loaded = 0; free(g_rom); g_rom = NULL; g_input = 0;
 }

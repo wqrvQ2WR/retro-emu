@@ -13,6 +13,8 @@ struct LibraryView: View {
   @State private var showSync = false
   @State private var picking = false
   @State private var removing: Game?
+  @State private var unlockTarget: Game?
+  @State private var lockedTap: Game?
 
   var body: some View {
     ZStack {
@@ -45,9 +47,13 @@ struct LibraryView: View {
           ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 158), spacing: 14)], spacing: 14) {
               ForEach(model.games) { g in
-                Button { model.playing = g } label: { GameCard(game: g) }
+                Button { if model.isLocked(g) { lockedTap = g } else { model.playing = g } } label: { GameCard(game: g, locked: model.isLocked(g)) }
                   .buttonStyle(.plain)
-                  .contextMenu { Button(role: .destructive) { removing = g } label: { Label("지우기", systemImage: "trash") } }
+                  .contextMenu {
+                    if model.isLocked(g) { Button { unlockTarget = g } label: { Label("잠금 풀기", systemImage: "lock.open") } }
+                    else { Button { model.setLocked(g, true) } label: { Label("잠그기", systemImage: "lock") } }
+                    Button(role: .destructive) { removing = g } label: { Label("지우기", systemImage: "trash") }
+                  }
               }
             }.padding(.bottom, 20)
           }
@@ -63,6 +69,13 @@ struct LibraryView: View {
     .fileImporter(isPresented: $picking, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
       if case .success(let urls) = r { model.add(urls: urls) }
     }
+    .alert("\(unlockTarget?.title ?? "") 잠금을 풀까요?", isPresented: Binding(get: { unlockTarget != nil }, set: { if !$0 { unlockTarget = nil } })) {
+      Button("잠금 풀기", role: .destructive) { if let g = unlockTarget { model.setLocked(g, false) }; unlockTarget = nil }
+      Button("취소", role: .cancel) { unlockTarget = nil }
+    } message: { Text(lockWarning) }
+    .alert("잠긴 게임이에요", isPresented: Binding(get: { lockedTap != nil }, set: { if !$0 { lockedTap = nil } })) {
+      Button("확인", role: .cancel) { lockedTap = nil }
+    } message: { Text("켜려면 길게 눌러서 잠금 풀기를 골라요.") }
     .alert("지울까요?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
       Button("지우기", role: .destructive) { if let g = removing { model.remove(g) }; removing = nil }
       Button("취소", role: .cancel) { removing = nil }
@@ -83,10 +96,21 @@ struct LibraryView: View {
   }
 }
 
+/// 잠금을 풀 때 경고(맥·윈도우·안드로이드와 같은 문구)
+let lockWarning = "잠금을 풀면 누구나 바로 켜서 할 수 있어요. 게임 시간을 지키려고 잠가 둔 거라면 풀지 마세요."
+
 struct GameCard: View {
   let game: Game
+  var locked = false
   var body: some View {
     ZStack(alignment: .bottomLeading) {
+      if locked {
+        Label("잠김", systemImage: "lock.fill")
+          .font(.system(size: 11, weight: .heavy)).foregroundColor(.white)
+          .padding(.horizontal, 9).padding(.vertical, 4)
+          .background(Color.black.opacity(0.35), in: Capsule())
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      }
       if let img = game.system.photo {
         GeometryReader { g in
           Image(uiImage: img).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
@@ -105,6 +129,7 @@ struct GameCard: View {
     .padding(12)
     .background(LinearGradient(colors: game.system.gradient, startPoint: .topLeading, endPoint: .bottomTrailing),
                 in: RoundedRectangle(cornerRadius: 18))
+    .saturation(locked ? 0.35 : 1)
     .shadow(color: game.system.gradient[0].opacity(0.35), radius: 8, y: 4)
     .contentShape(RoundedRectangle(cornerRadius: 18))
   }

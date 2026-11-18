@@ -5,7 +5,10 @@ struct Game: Codable, Identifiable, Hashable {
   var path: String
   var title: String
   var system: GameSystem
+  /// 잠긴 게임은 목록에서 눌러도 안 켜진다(예전 library.json 엔 없어서 옵셔널)
+  var locked: Bool?
   var id: String { path }
+  var isLocked: Bool { locked ?? false }
 }
 
 @MainActor
@@ -48,6 +51,12 @@ final class AppModel: ObservableObject {
     games.sort { $0.title.localizedCompare($1.title) == .orderedAscending }
     save()
     if !found && !urls.isEmpty { error = "열 수 있는 롬이 없어요" }
+  }
+
+  func setLocked(_ g: Game, _ on: Bool) {
+    guard let i = games.firstIndex(where: { $0.path == g.path }) else { return }
+    games[i].locked = on ? true : nil
+    save()
   }
 
   func remove(_ g: Game) { games.removeAll { $0 == g }; save() }

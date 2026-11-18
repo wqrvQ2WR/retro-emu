@@ -227,7 +227,7 @@ static char base_dir[2048], data_dir[2048], roms_dir[2048], saves_dir[2048], sys
 static SDL_Texture *photo[NSYS];
 static int photo_w[NSYS], photo_h[NSYS];
 
-typedef struct { char *name; char *title; int sys; } Game;
+typedef struct { char *name; char *title; int sys; int locked; } Game;
 static Game games[512];
 static int ngames;
 
@@ -422,6 +422,23 @@ static void load_library(void) {
   free_list(l);
   qsort(games, ngames, sizeof *games, game_cmp);
   if (sel >= ngames) sel = ngames - 1; if (sel < 0) sel = 0;
+  // 잠긴 게임: data/locked.txt 에 롬 파일 이름 한 줄씩
+  char lp[2100]; snprintf(lp, sizeof lp, "%s/locked.txt", data_dir);
+  size_t n2; char *t = read_all(lp, &n2);
+  if (t) {
+    t = realloc(t, n2 + 1); t[n2] = 0;
+    for (char *line = strtok(t, "\r\n"); line; line = strtok(NULL, "\r\n"))
+      for (int i = 0; i < ngames; i++) if (!strcmp(games[i].name, line)) games[i].locked = 1;
+    free(t);
+  }
+}
+static void save_locks(void) {
+  char lp[2100]; snprintf(lp, sizeof lp, "%s/locked.txt", data_dir);
+  size_t cap = 1, len = 0; for (int i = 0; i < ngames; i++) if (games[i].locked) cap += strlen(games[i].name) + 1;
+  char *b = malloc(cap); b[0] = 0;
+  for (int i = 0; i < ngames; i++) if (games[i].locked) len += sprintf(b + len, "%s\n", games[i].name);
+  if (len) write_all(lp, b, len); else remove_u8(lp);
+  free(b);
 }
 
 static int add_rom(const char *path) {
@@ -480,6 +497,17 @@ static void pick_files(void) {
 #endif
 }
 
+// 잠금을 풀 때 경고(맥·안드로이드·iOS 와 같은 문구)
+#define LOCK_WARNING "잠금을 풀면 누구나 바로 켜서 할 수 있어요. 게임 시간을 지키려고 잠가 둔 거라면 풀지 마세요."
+static void unlock_game(int i) { if (i >= 0 && i < ngames) { games[i].locked = 0; save_locks(); toast("잠금을 풀었어요"); } }
+static void toggle_lock(int i) {
+  if (i < 0 || i >= ngames) return;
+  if (games[i].locked) {
+    char t[128]; snprintf(t, sizeof t, "%s 잠금을 풀까요?", games[i].title);
+    ask(t, LOCK_WARNING, "잠금 풀기", unlock_game, i);
+  } else { games[i].locked = 1; save_locks(); toast("잠갔어요 · 풀 때는 오른쪽 클릭이나 L 키"); }
+}
+
 static void delete_game(int i) {
   if (i < 0 || i >= ngames) return;
   char p[2300]; snprintf(p, sizeof p, "%s/%s", roms_dir, games[i].name);
@@ -527,6 +555,19 @@ static void panel_refresh(void) {
 static void panel_open(int open) {
   panel.open = open;
   if (open) { panel_refresh(); panel.sel = quick_slot; key_mask = 0; }
+  if (audio) SDL_PauseAudioDevice(audio, open);
+  last_counter = SDL_GetPerformanceCounter(); frame_acc = 0;
+}
+
+#define NACT_ROWS 20
+// Esc 일시정지 메뉴: 이어하기 / 저장·불러오기 / 조작법 / 나가기
+static struct { int open, sel; } pmenu;
+static const char *PMENU[] = {"이어하기", "저장 / 불러오기", "조작법", "나가기"};
+#define NPMENU 4
+// 조작법 화면: 줄마다 동작 번호와 이름(코어가 알려 준 이름 그대로)
+static struct { int open, sel, capture, n; int act[NACT_ROWS]; char name[NACT_ROWS][96]; } ctl;
+static void pmenu_open(int open) {
+  pmenu.open = open; pmenu.sel = 0; key_mask = 0;
   if (audio) SDL_PauseAudioDevice(audio, open);
   last_counter = SDL_GetPerformanceCounter(); frame_acc = 0;
 }
@@ -647,7 +688,7 @@ static int start_game(Game *g) {
   screen = PLAY;
   char st[2300]; slot_paths(0, st, NULL);
   if (exists_u8(st)) panel_open(1);   // 지난번 자동 저장이 있으면 목록부터
-  else toast("Esc 나가기 · F1 저장 · F2 불러오기 · F3 저장 목록");
+  else toast("Esc 메뉴 · F1 저장 · F2 불러오기 · F3 저장 목록");
   if (sync_failed) toast("동기화 서버에 못 닿아서 이 기기 저장으로 시작해요");
   return 1;
 }
@@ -659,7 +700,7 @@ static void stop_game(void) {
   char s[2300]; sram_path(s); rh_sram_save(s);
   rh_close();
   sync_push_async(saves_dir, cur->name);   // 다른 기기용으로 올리기(뒤에서)
-  cur = NULL; panel.open = 0;
+  cur = NULL; panel.open = 0; pmenu.open = 0; ctl.open = 0;
   if (game_tex) { SDL_DestroyTexture(game_tex); game_tex = NULL; }
   for (int i = 0; i < NSLOT; i++) if (panel.thumb[i]) { SDL_DestroyTexture(panel.thumb[i]); panel.thumb[i] = NULL; }
   screen = LIB;
@@ -669,7 +710,7 @@ static void run_frames(void) {
   Uint64 now = SDL_GetPerformanceCounter();
   double dt = (double)(now - last_counter) / SDL_GetPerformanceFrequency();
   last_counter = now;
-  if (panel.open || confirm.open) return;
+  if (panel.open || pmenu.open || ctl.open || confirm.open) return;
   frame_acc += dt;
   double ft = 1.0 / rh_fps();
   if (frame_acc > ft * 4) frame_acc = ft * 4;   // 멈췄다 돌아오면 따라잡지 않음
@@ -714,18 +755,55 @@ static void run_frames(void) {
 
 // ---------------------------------------------------------------- 입력
 
-static int key_bit(SDL_Scancode k) {
-  switch (k) {
-  case SDL_SCANCODE_UP: return RH_UP; case SDL_SCANCODE_DOWN: return RH_DOWN;
-  case SDL_SCANCODE_LEFT: return RH_LEFT; case SDL_SCANCODE_RIGHT: return RH_RIGHT;
-  case SDL_SCANCODE_Z: return RH_B; case SDL_SCANCODE_X: return RH_A;
-  case SDL_SCANCODE_A: return RH_Y; case SDL_SCANCODE_S: return RH_X;
-  case SDL_SCANCODE_Q: return RH_L; case SDL_SCANCODE_W: return RH_R;
-  case SDL_SCANCODE_E: return RH_L2; case SDL_SCANCODE_R: return RH_R2;
-  case SDL_SCANCODE_RETURN: return RH_START;
-  case SDL_SCANCODE_BACKSPACE: case SDL_SCANCODE_TAB: case SDL_SCANCODE_RSHIFT: return RH_SELECT;
-  default: return -1;
+// 기종별 키 배정. 동작 0~15 는 패드 버튼(RH_*), 16~19 는 오른쪽 스틱 위·아래·왼쪽·오른쪽.
+// data/keys.txt 에 "기종 동작 스캔코드" 한 줄씩(맥·안드로이드와 따로 저장).
+#define NACT 20
+static SDL_Scancode keymap[NSYS][NACT];
+static const SDL_Scancode KEY_DEFAULT[NACT] = {
+  [RH_UP] = SDL_SCANCODE_UP, [RH_DOWN] = SDL_SCANCODE_DOWN, [RH_LEFT] = SDL_SCANCODE_LEFT, [RH_RIGHT] = SDL_SCANCODE_RIGHT,
+  [RH_B] = SDL_SCANCODE_Z, [RH_A] = SDL_SCANCODE_X, [RH_Y] = SDL_SCANCODE_A, [RH_X] = SDL_SCANCODE_S,
+  [RH_L] = SDL_SCANCODE_Q, [RH_R] = SDL_SCANCODE_W, [RH_L2] = SDL_SCANCODE_E, [RH_R2] = SDL_SCANCODE_R,
+  [RH_START] = SDL_SCANCODE_RETURN, [RH_SELECT] = SDL_SCANCODE_TAB,
+  [16] = SDL_SCANCODE_I, [17] = SDL_SCANCODE_K, [18] = SDL_SCANCODE_J, [19] = SDL_SCANCODE_L,
+};
+/// 메뉴용이라 게임 버튼으로 못 쓰는 키
+static int key_reserved(SDL_Scancode k) {
+  return k == SDL_SCANCODE_ESCAPE || k == SDL_SCANCODE_F1 || k == SDL_SCANCODE_F2 || k == SDL_SCANCODE_F3 || k == SDL_SCANCODE_F11;
+}
+static void keys_path(char *out, size_t n) { snprintf(out, n, "%s/keys.txt", data_dir); }
+static void keys_load(void) {
+  for (int s = 0; s < NSYS; s++) memcpy(keymap[s], KEY_DEFAULT, sizeof KEY_DEFAULT);
+  char p[2100]; keys_path(p, sizeof p);
+  size_t n; char *t = read_all(p, &n); if (!t) return;
+  t = realloc(t, n + 1); t[n] = 0;
+  int cleared[64] = {0};
+  for (char *line = strtok(t, "\r\n"); line; line = strtok(NULL, "\r\n")) {
+    char id[32]; int a, k;
+    if (sscanf(line, "%31s %d %d", id, &a, &k) != 3 || a < 0 || a >= NACT) continue;
+    for (int s = 0; s < NSYS; s++) if (!strcmp(SYS[s].id, id)) {
+      if (!cleared[s]) { memset(keymap[s], 0, sizeof keymap[s]); cleared[s] = 1; }   // 저장된 기종은 파일 내용이 전부
+      keymap[s][a] = (SDL_Scancode)k;
+    }
   }
+  free(t);
+}
+static void keys_save(void) {
+  char p[2100]; keys_path(p, sizeof p);
+  char *b = malloc(NSYS * NACT * 40 + 1); size_t len = 0;
+  for (int s = 0; s < NSYS; s++) {
+    if (!memcmp(keymap[s], KEY_DEFAULT, sizeof KEY_DEFAULT)) continue;   // 기본값인 기종은 안 적는다
+    int any = 0;
+    for (int a = 0; a < NACT; a++) if (keymap[s][a]) { len += sprintf(b + len, "%s %d %d\n", SYS[s].id, a, (int)keymap[s][a]); any = 1; }
+    if (!any) len += sprintf(b + len, "%s 0 0\n", SYS[s].id);
+  }
+  if (len) write_all(p, b, len); else remove_u8(p);
+  free(b);
+}
+/// 지금 기종에서 이 키가 맡은 동작(-1: 없음)
+static int key_action(SDL_Scancode k) {
+  if (!cur || !k || key_reserved(k)) return -1;
+  for (int a = 0; a < NACT; a++) if (keymap[cur->sys][a] == k) return a;
+  return -1;
 }
 // 패드: 위치 기준(아래=B, 오른쪽=A, 왼쪽=Y, 위=X)
 static int pad_bit(int b) {
@@ -756,7 +834,7 @@ static void update_pad_axes(void) {
 }
 
 // 메뉴용 공통 명령
-enum { NAV_NONE, NAV_UP, NAV_DOWN, NAV_LEFT, NAV_RIGHT, NAV_OK, NAV_BACK, NAV_ALT, NAV_DEL };
+enum { NAV_NONE, NAV_UP, NAV_DOWN, NAV_LEFT, NAV_RIGHT, NAV_OK, NAV_BACK, NAV_ALT, NAV_DEL, NAV_LOCK };
 
 static void toggle_fullscreen(void) {
   Uint32 f = SDL_GetWindowFlags(win);
@@ -782,6 +860,15 @@ static void lib_ensure_visible(void) {
   if (bottom > scroll_y + view) scroll_y = bottom - view;
 }
 
+// 목록 카드 오른쪽 클릭 메뉴: 잠그기·잠금 풀기 / 지우기
+static struct { int open, i; float x, y; } cmenu;
+
+static void lib_open(int i) {
+  if (i < 0 || i >= ngames) return;
+  if (games[i].locked) { toast("잠긴 게임이에요 · 오른쪽 클릭이나 L 키로 잠금을 풀어요"); return; }
+  start_game(&games[i]);
+}
+
 static void lib_nav(int n) {
   if (confirm.open) return;
   if (!ngames) { if (n == NAV_OK) pick_files(); return; }
@@ -790,7 +877,8 @@ static void lib_nav(int n) {
   if (n == NAV_RIGHT && sel < ngames - 1) sel++;
   if (n == NAV_UP && sel - lib_cols >= 0) sel -= lib_cols;
   if (n == NAV_DOWN && sel + lib_cols < ngames) sel += lib_cols;
-  if (n == NAV_OK) start_game(&games[sel]);
+  if (n == NAV_OK) lib_open(sel);
+  if (n == NAV_LOCK) toggle_lock(sel);
   if (n == NAV_DEL) {
     char b[256]; snprintf(b, sizeof b, "%s 롬 파일을 앱 폴더에서 지워요. 저장은 남아요.", games[sel].title);
     ask("목록에서 지울까요?", b, "지우기", delete_game, sel);
@@ -830,11 +918,72 @@ static void confirm_nav(int n) {
   if (n == NAV_BACK) confirm.open = 0;
   if (n == NAV_OK) { confirm.open = 0; if (confirm.focus) confirm.fn(confirm.arg); }
 }
+static void ctl_open(void) {
+  static const int order[16] = {RH_UP, RH_DOWN, RH_LEFT, RH_RIGHT, RH_A, RH_B, RH_X, RH_Y, RH_L, RH_R, RH_L2, RH_R2, RH_L3, RH_R3, RH_START, RH_SELECT};
+  static const char *generic[16] = {[RH_UP] = "위", [RH_DOWN] = "아래", [RH_LEFT] = "왼쪽", [RH_RIGHT] = "오른쪽", [RH_A] = "A", [RH_B] = "B",
+    [RH_X] = "X", [RH_Y] = "Y", [RH_L] = "L", [RH_R] = "R", [RH_L2] = "L2", [RH_R2] = "R2", [RH_START] = "Start", [RH_SELECT] = "Select"};
+  static const char *dirs[4] = {"위", "아래", "왼쪽", "오른쪽"};
+  const System *sy = &SYS[cur->sys];
+  int has_core = 0; for (int i = 0; i < 20; i++) if (rh_button_name(i)) has_core = 1;
+  ctl.n = 0;
+  for (int j = 0; j < 16; j++) {
+    int a = order[j]; const char *nm = rh_button_name(a);
+    if (sy->stick_first && a >= RH_UP && a <= RH_RIGHT) snprintf(ctl.name[ctl.n], 96, "왼쪽 스틱 %s", dirs[a - RH_UP]);   // 방향 키가 왼쪽 스틱으로 감
+    else if (nm) snprintf(ctl.name[ctl.n], 96, "%s", nm);
+    else if (!has_core && generic[a]) snprintf(ctl.name[ctl.n], 96, "%s", generic[a]);
+    else continue;
+    ctl.act[ctl.n++] = a;
+  }
+  if (sy->analog) for (int i = 0; i < 4 && ctl.n < NACT_ROWS; i++) {
+    const char *nm = rh_button_name(16 + i);
+    snprintf(ctl.name[ctl.n], 96, "%s %s", nm ? nm : "오른쪽 스틱", dirs[i]);
+    ctl.act[ctl.n++] = 16 + i;
+  }
+  ctl.open = 1; ctl.sel = 0; ctl.capture = -1;
+}
+static void ctl_close(void) { ctl.open = 0; ctl.capture = -1; pmenu.open = 1; pmenu.sel = 2; }   // 일시정지 메뉴로 돌아감(오디오는 멈춘 채)
+static void ctl_reset(void) {
+  memcpy(keymap[cur->sys], KEY_DEFAULT, sizeof KEY_DEFAULT); keys_save();
+  key_mask = 0; rstick_keys = 0; toast("기본 키로 돌렸어요");
+}
+static void ctl_key(SDL_Scancode k) {
+  int a = ctl.capture; ctl.capture = -1;
+  if (k == SDL_SCANCODE_ESCAPE) return;
+  if (key_reserved(k)) { toast("그 키는 메뉴용이라 못 써요"); return; }
+  for (int i = 0; i < NACT; i++) if (keymap[cur->sys][i] == k) keymap[cur->sys][i] = 0;   // 같은 키를 쓰던 동작은 비움
+  keymap[cur->sys][a] = k; keys_save();
+  key_mask = 0; rstick_keys = 0;
+}
+static void ctl_nav(int n) {
+  if (n == NAV_UP && ctl.sel >= 2) ctl.sel -= 2;
+  if (n == NAV_DOWN && ctl.sel + 2 < ctl.n) ctl.sel += 2;
+  if (n == NAV_LEFT && ctl.sel > 0) ctl.sel--;
+  if (n == NAV_RIGHT && ctl.sel < ctl.n - 1) ctl.sel++;
+  if (n == NAV_OK && ctl.n) ctl.capture = ctl.act[ctl.sel];
+  if (n == NAV_DEL) ctl_reset();
+  if (n == NAV_BACK) ctl_close();
+}
+
+static void pmenu_pick(int i) {
+  if (i == 0) pmenu_open(0);
+  else if (i == 1) { pmenu.open = 0; panel_open(1); }   // 오디오는 저장 목록이 이어서 멈춰 둔다
+  else if (i == 2) { pmenu.open = 0; ctl_open(); }
+  else { pmenu.open = 0; stop_game(); }
+}
+static void pmenu_nav(int n) {
+  if (n == NAV_UP && pmenu.sel > 0) pmenu.sel--;
+  if (n == NAV_DOWN && pmenu.sel < NPMENU - 1) pmenu.sel++;
+  if (n == NAV_OK) pmenu_pick(pmenu.sel);
+  if (n == NAV_BACK) pmenu_open(0);
+}
 static void nav(int n) {
   if (confirm.open) { confirm_nav(n); return; }
+  if (cmenu.open) { if (n == NAV_BACK) cmenu.open = 0; return; }
   if (screen == LIB) lib_nav(n);
   else if (panel.open) panel_nav(n);
-  else if (n == NAV_BACK) stop_game();
+  else if (ctl.open) ctl_nav(n);
+  else if (pmenu.open) pmenu_nav(n);
+  else if (n == NAV_BACK) pmenu_open(1);
 }
 
 // ---------------------------------------------------------------- 화면 그리기
@@ -916,6 +1065,20 @@ static void draw_library(void) {
       float room = ty - 17 * S - 6 * S - (y + 12 * S); if (ph > room) ph = room;
       draw_fit(photo[g->sys], photo_w[g->sys], photo_h[g->sys], x + card_w - 14 * S - pw, y + 12 * S, pw, ph, 1);
     }
+    if (g->locked) {   // 흐리게 + 왼쪽 위 "잠김"
+      SDL_Color fog = rgba(150, 150, 170, 120);
+      rrect(x, y, card_w, card_h, 20 * S, fog, fog, 0);
+      float lw = text_w("잠김", 12, 1) + 34 * S, lh2 = 24 * S, lx = x + 12 * S, ly = y + 12 * S;
+      SDL_Color dk = rgba(0, 0, 0, 90);
+      rrect(lx, ly, lw, lh2, lh2 / 2, dk, dk, 0);
+      // 자물쇠: 고리 + 몸통
+      SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+      SDL_FRect lb = {lx + 10 * S, ly + 10 * S, 10 * S, 8 * S};
+      SDL_FRect sh[3] = {{lx + 11.5f * S, ly + 5 * S, 1.8f * S, 6 * S}, {lx + 16.7f * S, ly + 5 * S, 1.8f * S, 6 * S}, {lx + 11.5f * S, ly + 5 * S, 7 * S, 1.8f * S}};
+      SDL_RenderFillRectF(ren, &lb); SDL_RenderFillRectsF(ren, sh, 3);
+      TextEntry *tl = text_tex("잠김", 1, (int)(12 * S + .5f));
+      if (tl) text("잠김", lx + 25 * S, ly + (lh2 - tl->h) / 2, 12, 1, rgba(255, 255, 255, 255), 0);
+    }
     text(s->title, tx, ty - 17 * S, 12, 0, rgba(255, 255, 255, 230), 0);
     text_wrap(g->title, tx, ty, maxw, 17, 1, rgba(255, 255, 255, 255), 2);
   }
@@ -971,14 +1134,94 @@ static void draw_panel(void) {
   if (mouse_click && !hit(px, py, pw, ph)) { panel_open(0); mouse_click = 0; }
 }
 
+static void draw_pmenu(void) {
+  SDL_SetRenderDrawColor(ren, 0, 0, 0, 140); SDL_RenderFillRect(ren, NULL);
+  float w = 340 * S, bh = 46 * S, gap = 12 * S, h = 22 * S + 40 * S + NPMENU * bh + (NPMENU - 1) * gap + 22 * S;
+  float x = (W - w) / 2, y = (H - h) / 2;
+  shadow(x, y, w, h, 24 * S, 90);
+  SDL_Color a = {255, 238, 247, 255}, b = {230, 244, 255, 255};
+  rrect(x, y, w, h, 24 * S, a, b, 2);
+  text_accent("일시정지", x + 22 * S, y + 20 * S, 22);
+  text("Esc 이어하기", x + w - 22 * S, y + 27 * S, 12, 0, rgba(0, 0, 0, 115), 2);
+  for (int i = 0; i < NPMENU; i++) {
+    float by = y + 62 * S + i * (bh + gap), bx = x + 22 * S, bw = w - 44 * S;
+    if (i == pmenu.sel) rrect(bx - 3 * S, by - 3 * S, bw + 6 * S, bh + 6 * S, bh / 2 + 3 * S, PINK, SKY, 3);
+    int over = btn(PMENU[i], bx, by, bw, bh, i == pmenu.sel, 1);
+    if (over) pmenu.sel = i;
+    if (over && mouse_click) { mouse_click = 0; pmenu_pick(i); return; }
+  }
+  if (mouse_click && !hit(x, y, w, h)) { mouse_click = 0; pmenu_open(0); }
+}
+
+static void draw_ctl(void) {
+  SDL_SetRenderDrawColor(ren, 0, 0, 0, 140); SDL_RenderFillRect(ren, NULL);
+  int rows = (ctl.n + 1) / 2;
+  float pw = fminf(W - 56 * S, 680 * S), gap = 8 * S, rh = 40 * S;
+  float avail = H - 40 * S - (22 + 44 + 56) * S;
+  if (rows * (rh + gap) > avail) rh = avail / rows - gap;
+  if (rh < 22 * S) rh = 22 * S;
+  float ph = 22 * S + 44 * S + rows * (rh + gap) + 56 * S;
+  float px = (W - pw) / 2, py = (H - ph) / 2;
+  shadow(px, py, pw, ph, 24 * S, 90);
+  SDL_Color a = {255, 238, 247, 255}, b = {230, 244, 255, 255};
+  rrect(px, py, pw, ph, 24 * S, a, b, 2);
+  text_accent("조작법", px + 22 * S, py + 20 * S, 22);
+  text(SYS[cur->sys].title, px + 22 * S + text_w("조작법", 22, 1) + 26 * S, py + 27 * S, 15, 1, rgba(0, 0, 0, 140), 0);
+  text(ctl.capture >= 0 ? "새 키를 누르세요 · Esc 취소" : "줄을 누르고 새 키 · Del 기본값 · Esc 뒤로", px + pw - 22 * S, py + 27 * S, 12, 0, rgba(0, 0, 0, 115), 2);
+  float cw = (pw - 44 * S - 10 * S) / 2;
+  for (int i = 0; i < ctl.n; i++) {
+    float x = px + 22 * S + (i % 2) * (cw + 10 * S), y = py + 66 * S + (i / 2) * (rh + gap);
+    SDL_Color wc = rgba(255, 255, 255, 220);
+    if (i == ctl.sel) rrect(x - 3 * S, y - 3 * S, cw + 6 * S, rh + 6 * S, 15 * S, PINK, SKY, 3);
+    rrect(x, y, cw, rh, 12 * S, wc, wc, 0);
+    int a = ctl.act[i], waiting = ctl.capture == a;
+    const char *kn = waiting ? "누르세요" : keymap[cur->sys][a] ? SDL_GetScancodeName(keymap[cur->sys][a]) : "없음";
+    float kw = fmaxf(64 * S, text_w(kn, 13, 1) + 24 * S), kh = rh - 12 * S, kx = x + cw - 8 * S - kw, ky = y + 6 * S;
+    SDL_Color soft = rgba(237, 232, 255, 255);
+    if (waiting) rrect(kx, ky, kw, kh, kh / 2, PINK, SKY, 3); else rrect(kx, ky, kw, kh, kh / 2, soft, soft, 0);
+    TextEntry *te = text_tex(kn, 1, (int)(13 * S + .5f));
+    if (te) text(kn, kx + kw / 2, ky + (kh - te->h) / 2, 13, 1,
+                 waiting ? rgba(255, 255, 255, 255) : keymap[cur->sys][a] ? rgba(91, 51, 191, 255) : rgba(0, 0, 0, 90), 1);
+    // 이름이 길면 칸 안에서 자른다
+    SDL_Rect clip = {(int)(x + 10 * S), (int)y, (int)(kx - x - 16 * S), (int)rh};
+    SDL_RenderSetClipRect(ren, &clip);
+    TextEntry *tn = text_tex(ctl.name[i], 0, (int)(13 * S + .5f));
+    if (tn) text(ctl.name[i], x + 12 * S, y + (rh - tn->h) / 2, 13, 0, rgba(0, 0, 0, 205), 0);
+    SDL_RenderSetClipRect(ren, NULL);
+    if (mouse_click && hit(x, y, cw, rh)) { ctl.sel = i; ctl.capture = a; mouse_click = 0; }
+  }
+  float fy = py + ph - 22 * S - 34 * S;
+  text("Esc 메뉴 · F1 저장 · F2 불러오기 · F3 저장 목록 · F11 전체 화면은 고정", px + 22 * S, fy + 9 * S, 12, 0, rgba(0, 0, 0, 115), 0);
+  float bw = 120 * S;
+  if (btn("기본값으로", px + pw - 22 * S - bw, fy, bw, 34 * S, 0, 1) && mouse_click) { ctl_reset(); mouse_click = 0; }
+  if (mouse_click && !hit(px, py, pw, ph)) { mouse_click = 0; ctl_close(); }
+}
+
+static void draw_cmenu(void) {
+  if (cmenu.i < 0 || cmenu.i >= ngames) { cmenu.open = 0; return; }
+  float w = 170 * S, bh = 34 * S, h = 12 * S * 2 + bh * 2 + 8 * S;
+  float x = fminf(cmenu.x, W - w - 8 * S), y = fminf(cmenu.y, H - h - 8 * S);
+  shadow(x, y, w, h, 16 * S, 80);
+  SDL_Color wc = rgba(255, 255, 255, 250);
+  rrect(x, y, w, h, 16 * S, wc, wc, 0);
+  int i = cmenu.i;
+  if (btn(games[i].locked ? "잠금 풀기" : "잠그기", x + 12 * S, y + 12 * S, w - 24 * S, bh, 1, 1) && mouse_click) {
+    mouse_click = 0; cmenu.open = 0; toggle_lock(i); return;
+  }
+  if (btn("목록에서 지우기", x + 12 * S, y + 12 * S + bh + 8 * S, w - 24 * S, bh, 0, 1) && mouse_click) {
+    mouse_click = 0; cmenu.open = 0; sel = i; lib_nav(NAV_DEL); return;
+  }
+  if (mouse_click && !hit(x, y, w, h)) { mouse_click = 0; cmenu.open = 0; }
+}
+
 static void draw_confirm(void) {
   SDL_SetRenderDrawColor(ren, 0, 0, 0, 120); SDL_RenderFillRect(ren, NULL);
-  float w = 380 * S, h = 168 * S, x = (W - w) / 2, y = (H - h) / 2;
+  float w = 400 * S, h = 190 * S, x = (W - w) / 2, y = (H - h) / 2;
   shadow(x, y, w, h, 20 * S, 90);
   SDL_Color wc = rgba(255, 255, 255, 255);
   rrect(x, y, w, h, 20 * S, wc, wc, 0);
   text(confirm.title, x + 22 * S, y + 20 * S, 18, 1, rgba(0, 0, 0, 220), 0);
-  text_wrap(confirm.body, x + 22 * S, y + 54 * S, w - 44 * S, 14, 0, rgba(0, 0, 0, 150), 2);
+  text_wrap(confirm.body, x + 22 * S, y + 54 * S, w - 44 * S, 14, 0, rgba(0, 0, 0, 150), 3);
   float bw = 110 * S, bh = 36 * S, by = y + h - bh - 18 * S;
   float cx = x + w - 22 * S - bw * 2 - 10 * S, ox = x + w - 22 * S - bw;
   if (!confirm.focus) rrect(cx - 3 * S, by - 3 * S, bw + 6 * S, bh + 6 * S, bh / 2 + 3 * S, PINK, SKY, 3);
@@ -1107,6 +1350,8 @@ static void draw_game(void) {
     SDL_RenderCopyF(ren, game_tex, NULL, &d);
   }
   if (panel.open) draw_panel();
+  if (pmenu.open) draw_pmenu();
+  if (ctl.open) draw_ctl();
 }
 
 static void draw_toast(void) {
@@ -1208,6 +1453,7 @@ int main(int argc, char **argv) {
   }
 
   if (nadd) add_files(add_list, nadd);
+  keys_load();
   load_library();
   if (start_rom) {
     add_rom(start_rom); load_library();
@@ -1232,7 +1478,7 @@ int main(int argc, char **argv) {
       case SDL_DROPFILE: { char *p = e.drop.file; add_files(&p, 1); SDL_free(p); break; }
       case SDL_MOUSEMOTION:
         mouse_x = e.motion.x * mscale; mouse_y = e.motion.y * mscale;
-        if (screen == PLAY && cur && SYS[cur->sys].touch && (e.motion.state & SDL_BUTTON_LMASK) && !panel.open && game_rect.w > 0)
+        if (screen == PLAY && cur && SYS[cur->sys].touch && (e.motion.state & SDL_BUTTON_LMASK) && !panel.open && !pmenu.open && !ctl.open && game_rect.w > 0)
           rh_set_pointer((mouse_x - game_rect.x) / game_rect.w, (mouse_y - game_rect.y) / game_rect.h, 1);
         break;
       case SDL_MOUSEBUTTONUP:
@@ -1242,7 +1488,7 @@ int main(int argc, char **argv) {
         mouse_x = e.button.x * mscale; mouse_y = e.button.y * mscale;
         if (e.button.button == SDL_BUTTON_LEFT) mouse_click = 1;
         // DS 아래 화면: 게임 그림 위를 누르면 터치
-        if (e.button.button == SDL_BUTTON_LEFT && screen == PLAY && cur && SYS[cur->sys].touch && !panel.open && !confirm.open && game_rect.w > 0 &&
+        if (e.button.button == SDL_BUTTON_LEFT && screen == PLAY && cur && SYS[cur->sys].touch && !panel.open && !pmenu.open && !ctl.open && !confirm.open && game_rect.w > 0 &&
             mouse_x >= game_rect.x && mouse_x < game_rect.x + game_rect.w && mouse_y >= game_rect.y && mouse_y < game_rect.y + game_rect.h) {
           rh_set_pointer((mouse_x - game_rect.x) / game_rect.w, (mouse_y - game_rect.y) / game_rect.h, 1);
           mouse_click = 0;
@@ -1251,24 +1497,24 @@ int main(int argc, char **argv) {
           lib_layout();
           for (int i = 0; i < ngames; i++) {
             float x = lib_x0 + (i % lib_cols) * (card_w + gap), y = lib_y0 + (i / lib_cols) * (card_h + gap) - scroll_y;
-            if (hit(x, y, card_w, card_h)) { sel = i; lib_nav(NAV_DEL); break; }
+            if (hit(x, y, card_w, card_h)) { sel = i; cmenu.open = 1; cmenu.i = i; cmenu.x = mouse_x; cmenu.y = mouse_y; break; }
           }
         }
         if (e.button.button == SDL_BUTTON_RIGHT && screen == PLAY && panel.open) mouse_rclick = 1;  // 저장 목록 칸 지우기
         break;
       case SDL_MOUSEWHEEL: if (screen == LIB) scroll_y -= e.wheel.preciseY * 60 * S; break;
-      case SDL_CONTROLLERDEVICEADDED: if (!pad) { pad = SDL_GameControllerOpen(e.cdevice.which); if (pad) toast("패드 연결됨 · 셀렉트+스타트 = 저장 목록"); } break;
+      case SDL_CONTROLLERDEVICEADDED: if (!pad) { pad = SDL_GameControllerOpen(e.cdevice.which); if (pad) toast("패드 연결됨 · 셀렉트+스타트 = 메뉴"); } break;
       case SDL_CONTROLLERDEVICEREMOVED:
         if (pad && e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pad))) { SDL_GameControllerClose(pad); pad = NULL; pad_mask = 0; toast("패드 끊김"); }
         break;
       case SDL_CONTROLLERBUTTONDOWN: case SDL_CONTROLLERBUTTONUP: {
         int down = e.type == SDL_CONTROLLERBUTTONDOWN, b = e.cbutton.button;
-        int in_game = screen == PLAY && !panel.open && !confirm.open;
+        int in_game = screen == PLAY && !panel.open && !pmenu.open && !ctl.open && !confirm.open;
         if (in_game) {
           int bit = pad_bit(b);
           if (bit >= 0) { if (down) pad_mask |= 1u << bit; else pad_mask &= ~(1u << bit); }
           uint32_t combo = (1u << RH_SELECT) | (1u << RH_START);
-          if ((down && (pad_mask & combo) == combo) || (down && b == SDL_CONTROLLER_BUTTON_GUIDE)) { pad_mask = 0; panel_open(1); }
+          if ((down && (pad_mask & combo) == combo) || (down && b == SDL_CONTROLLER_BUTTON_GUIDE)) { pad_mask = 0; pmenu_open(1); }
         } else if (down) {
           int n = NAV_NONE;
           if (b == SDL_CONTROLLER_BUTTON_DPAD_UP) n = NAV_UP; if (b == SDL_CONTROLLER_BUTTON_DPAD_DOWN) n = NAV_DOWN;
@@ -1296,14 +1542,14 @@ int main(int argc, char **argv) {
           else if (k == SDL_SCANCODE_V && (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI))) { char *c = SDL_GetClipboardText(); if (c) { sync_type(c); SDL_free(c); } }
           break;
         }
+        if (ctl.open && ctl.capture >= 0) { if (down && !e.key.repeat) ctl_key(k); break; }   // 조작법: 새 키 받기
         if (down && (k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)))) { toggle_fullscreen(); break; }
-        if (screen == PLAY && !panel.open && !confirm.open) {
-          int rb = k == SDL_SCANCODE_I ? 1 : k == SDL_SCANCODE_K ? 2 : k == SDL_SCANCODE_J ? 4 : k == SDL_SCANCODE_L ? 8 : 0;
-          if (rb) { if (down) rstick_keys |= rb; else rstick_keys &= ~rb; break; }
-          int bit = key_bit(k);
-          if (bit >= 0) { if (down) key_mask |= 1u << bit; else key_mask &= ~(1u << bit); }
+        if (screen == PLAY && !panel.open && !pmenu.open && !ctl.open && !confirm.open) {
+          int act = key_action(k);
+          if (act >= 16) { int rb = 1 << (act - 16); if (down) rstick_keys |= rb; else rstick_keys &= ~rb; break; }
+          if (act >= 0) { if (down) key_mask |= 1u << act; else key_mask &= ~(1u << act); }
           if (down && !e.key.repeat) {
-            if (k == SDL_SCANCODE_ESCAPE) stop_game();
+            if (k == SDL_SCANCODE_ESCAPE) pmenu_open(1);
             if (k == SDL_SCANCODE_F1) do_save(quick_slot);
             if (k == SDL_SCANCODE_F2) do_load(quick_slot);
             if (k == SDL_SCANCODE_F3) panel_open(1);
@@ -1316,6 +1562,7 @@ int main(int argc, char **argv) {
           if (k == SDL_SCANCODE_ESCAPE || k == SDL_SCANCODE_F3) n = NAV_BACK;
           if (k == SDL_SCANCODE_S || k == SDL_SCANCODE_F1) n = NAV_ALT;
           if (k == SDL_SCANCODE_DELETE) n = NAV_DEL;
+          if (k == SDL_SCANCODE_L && screen == LIB) n = NAV_LOCK;
           if (k == SDL_SCANCODE_O && (e.key.keysym.mod & KMOD_CTRL) && screen == LIB) pick_files();
           if (n) nav(n);
         }
@@ -1323,14 +1570,14 @@ int main(int argc, char **argv) {
       }
       case SDL_WINDOWEVENT:
         if (e.window.event == SDL_WINDOWEVENT_MINIMIZED && screen == PLAY && audio) SDL_PauseAudioDevice(audio, 1);
-        if (e.window.event == SDL_WINDOWEVENT_RESTORED && screen == PLAY && audio && !panel.open) { SDL_PauseAudioDevice(audio, 0); last_counter = SDL_GetPerformanceCounter(); }
+        if (e.window.event == SDL_WINDOWEVENT_RESTORED && screen == PLAY && audio && !panel.open && !pmenu.open && !ctl.open) { SDL_PauseAudioDevice(audio, 0); last_counter = SDL_GetPerformanceCounter(); }
         break;
       }
     }
     // 메뉴 화면에서 패드 스틱으로도 움직이기(꾹 누르면 반복)
     if (pad) {
       update_pad_axes();
-      if (!(screen == PLAY && !panel.open && !confirm.open) && !syncui.open) {
+      if (!(screen == PLAY && !panel.open && !pmenu.open && !ctl.open && !confirm.open) && !syncui.open) {
         int x = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX), y = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
         int n = x < -20000 ? NAV_LEFT : x > 20000 ? NAV_RIGHT : y < -20000 ? NAV_UP : y > 20000 ? NAV_DOWN : NAV_NONE;
         Uint32 now = SDL_GetTicks();
@@ -1343,9 +1590,10 @@ int main(int argc, char **argv) {
 
     if (screen == LIB) {
       draw_library();
+      if (cmenu.open && !confirm.open) draw_cmenu();
       // 왼쪽 클릭: 롬 추가 버튼 / 카드
       if (syncui.open) draw_sync();
-      if (mouse_click && !confirm.open && !syncui.open) {
+      if (mouse_click && !confirm.open && !syncui.open && !cmenu.open) {
         float bw = 112 * S, bh = 38 * S, bx = W - 28 * S - bw, by = 30 * S;
         const char *l = sync_enabled() ? "동기화 켜짐" : "동기화";
         float sw = text_w(l, 14, 0) + 32 * S, sx = bx - 10 * S - sw;
@@ -1354,7 +1602,7 @@ int main(int argc, char **argv) {
         else if (mouse_y >= lib_y0 - 8 * S)
           for (int i = 0; i < ngames; i++) {
             float x = lib_x0 + (i % lib_cols) * (card_w + gap), y = lib_y0 + (i / lib_cols) * (card_h + gap) - scroll_y;
-            if (hit(x, y, card_w, card_h)) { sel = i; start_game(&games[i]); break; }
+            if (hit(x, y, card_w, card_h)) { sel = i; lib_open(i); break; }
           }
         mouse_click = 0;
       }

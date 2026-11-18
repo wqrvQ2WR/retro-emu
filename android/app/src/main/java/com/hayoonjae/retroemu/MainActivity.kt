@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -154,12 +155,24 @@ private fun copyIn(ctx: android.content.Context, uri: Uri) {
     if (!tmp.renameTo(File(dir, name))) tmp.delete()
 }
 
+/** 잠금을 풀 때 경고(맥·윈도우·iOS 와 같은 문구) */
+const val LOCK_WARNING = "잠금을 풀면 누구나 바로 켜서 할 수 있어요. 게임 시간을 지키려고 잠가 둔 거라면 풀지 마세요."
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Library(games: List<File>, onPlay: (File) -> Unit, onAdd: () -> Unit, onDelete: (File) -> Unit) {
     var del by remember { mutableStateOf<File?>(null) }
     var syncOpen by remember { mutableStateOf(false) }
     val ctx = LocalView.current.context
+    // 잠긴 게임(롬 파일 이름). 잠긴 건 눌러도 안 켜지고, 풀 때 경고를 띄운다.
+    val lockPrefs = remember { ctx.getSharedPreferences("locks", android.content.Context.MODE_PRIVATE) }
+    var locked by remember { mutableStateOf(lockPrefs.getStringSet("names", emptySet())!!.toSet()) }
+    fun setLocked(f: File, on: Boolean) {
+        locked = if (on) locked + f.name else locked - f.name
+        lockPrefs.edit().putStringSet("names", locked).apply()
+    }
+    var actionFor by remember { mutableStateOf<File?>(null) }
+    var unlockFor by remember { mutableStateOf<File?>(null) }
     Box(Modifier.fillMaxSize().background(LightBg).systemBarsPadding().padding(horizontal = 16.dp)) {
         Column {
             Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -190,7 +203,10 @@ fun Library(games: List<File>, onPlay: (File) -> Unit, onAdd: () -> Unit, onDele
                         Box(
                             Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(20.dp))
                                 .background(Brush.linearGradient(sys.colors))
-                                .combinedClickable(onClick = { onPlay(f) }, onLongClick = { del = f })
+                                .combinedClickable(onClick = {
+                                    if (f.name in locked) android.widget.Toast.makeText(ctx, "잠긴 게임이에요 · 길게 눌러 잠금을 풀어요", android.widget.Toast.LENGTH_SHORT).show()
+                                    else onPlay(f)
+                                }, onLongClick = { actionFor = f })
                         ) {
                             // 게임기 사진: 오른쪽 위, 글자와 안 겹치게
                             androidx.compose.foundation.Image(
@@ -200,6 +216,15 @@ fun Library(games: List<File>, onPlay: (File) -> Unit, onAdd: () -> Unit, onDele
                                 modifier = Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp)
                                     .fillMaxWidth(if (sys.tallPhoto) 0.42f else 0.72f).height(if (sys.tallPhoto) 82.dp else 70.dp)
                             )
+                            if (f.name in locked) {
+                                Box(Modifier.matchParentSize().background(Color(0x77969AAA)))
+                                Row(Modifier.align(Alignment.TopStart).padding(10.dp).clip(CircleShape).background(Color(0x5C000000))
+                                    .padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Filled.Lock, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("잠김", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                                }
+                            }
                             Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
                                 Text(sys.title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xE6FFFFFF))
                                 Text(f.nameWithoutExtension.removeSuffix(".nkit"), fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.White,
@@ -212,6 +237,33 @@ fun Library(games: List<File>, onPlay: (File) -> Unit, onAdd: () -> Unit, onDele
         }
     }
     if (syncOpen) SyncDialog(games) { syncOpen = false }
+    actionFor?.let { f ->
+        val isLocked = f.name in locked
+        AlertDialog(onDismissRequest = { actionFor = null },
+            title = { Text(f.nameWithoutExtension.removeSuffix(".nkit")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(Modifier.fillMaxWidth().clip(CircleShape).background(AccentBrush)
+                        .combinedClickable(onClick = { actionFor = null; if (isLocked) unlockFor = f else setLocked(f, true) })
+                        .padding(vertical = 13.dp), contentAlignment = Alignment.Center) {
+                        Text(if (isLocked) "잠금 풀기" else "잠그기", fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                    Box(Modifier.fillMaxWidth().clip(CircleShape).background(Color(0xFFEDE8FF))
+                        .combinedClickable(onClick = { actionFor = null; del = f })
+                        .padding(vertical = 13.dp), contentAlignment = Alignment.Center) {
+                        Text("목록에서 지우기", fontWeight = FontWeight.Bold, color = Color(0xFF5C33BF))
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { actionFor = null }) { Text("닫기") } })
+    }
+    unlockFor?.let { f ->
+        AlertDialog(onDismissRequest = { unlockFor = null },
+            title = { Text("${f.nameWithoutExtension.removeSuffix(".nkit")} 잠금을 풀까요?") },
+            text = { Text(LOCK_WARNING) },
+            confirmButton = { TextButton(onClick = { setLocked(f, false); unlockFor = null }) { Text("잠금 풀기", color = Color(0xFFD62D6E)) } },
+            dismissButton = { TextButton(onClick = { unlockFor = null }) { Text("취소") } })
+    }
     del?.let { f ->
         AlertDialog(onDismissRequest = { del = null },
             confirmButton = { TextButton(onClick = { onDelete(f); del = null }) { Text("지우기") } },
