@@ -67,6 +67,12 @@ typedef pthread_mutex_t mutex_t;
 #define GL_NEAREST 0x2600
 #define GL_FRAMEBUFFER_COMPLETE 0x8CD5
 #define GL_PACK_ALIGNMENT 0x0D05
+#define GL_READ_FRAMEBUFFER 0x8CA8
+#define GL_DRAW_FRAMEBUFFER 0x8CA9
+#define GL_DRAW_FRAMEBUFFER_BINDING 0x8CA6
+#define GL_READ_FRAMEBUFFER_BINDING 0x8CAA
+#define GL_PIXEL_PACK_BUFFER 0x88EB
+#define GL_PIXEL_PACK_BUFFER_BINDING 0x88ED
 typedef unsigned int GLuint;
 static struct {
   void (*GenFramebuffers)(int, GLuint *); void (*BindFramebuffer)(unsigned, GLuint); void (*DeleteFramebuffers)(int, const GLuint *);
@@ -77,6 +83,7 @@ static struct {
   void (*RenderbufferStorage)(unsigned, unsigned, int, int); void (*FramebufferRenderbuffer)(unsigned, unsigned, unsigned, GLuint);
   unsigned (*CheckFramebufferStatus)(unsigned); void (*ReadPixels)(int, int, int, int, unsigned, unsigned, void *);
   void (*PixelStorei)(unsigned, int);
+  void (*GetIntegerv)(unsigned, int *); void (*BindBuffer)(unsigned, GLuint); unsigned (*GetError)(void);
 } GL;
 
 #if defined(__APPLE__)
@@ -274,6 +281,12 @@ static bool env_cb(unsigned cmd, void *data) {
       {"mgba_sgb_borders", "OFF"},  // 슈퍼 게임보이 테두리를 빼서 게임보이 화면을 크게(색은 그대로)
       {"melonds_touch_mode", "Touch"},  // DS 아래 화면: 마우스(상대 이동) 말고 터치 좌표로
       {"melonds_boot_directly", "enabled"},  // BIOS 없이 바로 게임
+      {"dolphin_osd_enabled", "disabled"},  // 게임큐브: 화면 위에 겹치는 Dolphin 안내 문구 끄기
+#if defined(__APPLE__) && TARGET_OS_OSX
+      // N64: 맥 OpenGL 에선 GLideN64 의 프레임버퍼 흉내가 검은 화면만 낸다(텍스처를 못 읽음).
+      // 소프트웨어 렌더러 Angrylion 은 정확하고, 애플 실리콘에서 140~250fps 라 충분하다.
+      {"mupen64plus-rdp-plugin", "angrylion"},
+#endif
     };
     for (size_t i = 0; v && v->key && i < sizeof opts / sizeof *opts; i++)
       if (!strcmp(v->key, opts[i][0])) { v->value = opts[i][1]; return true; }
@@ -334,9 +347,22 @@ static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
     if ((int)w > g_fbo_w) w = g_fbo_w; if ((int)h > g_fbo_h) h = g_fbo_h;
     size_t need = (size_t)w * h * 4;
     if (need > g_readback_cap) { free(g_readback); g_readback = malloc(need); g_readback_cap = need; }
+    // 코어의 GL 상태를 건드리면 안 된다(코어는 자기가 묶어 둔 프레임버퍼·PBO 를 기억하고 있다).
+    // 읽기 전에 바인딩을 저장하고, 끝나면 되돌린다. GLES2 에 없는 항목은 -1 로 남아서 건너뛴다.
+    int rf = -1, df = -1, pb = -1, al = -1;
+    GL.GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &df);
+    GL.GetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &rf);
+    GL.GetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pb);
+    GL.GetIntegerv(GL_PACK_ALIGNMENT, &al);
+    while (GL.GetError()) {}
+    if (pb > 0) GL.BindBuffer(GL_PIXEL_PACK_BUFFER, 0);   // PBO 가 묶여 있으면 ReadPixels 가 그쪽에 써 버린다
     GL.BindFramebuffer(GL_FRAMEBUFFER, g_fbo);
     GL.PixelStorei(GL_PACK_ALIGNMENT, 1);
     GL.ReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, g_readback);
+    if (rf >= 0 && df >= 0 && rf != df) { GL.BindFramebuffer(GL_READ_FRAMEBUFFER, rf); GL.BindFramebuffer(GL_DRAW_FRAMEBUFFER, df); }
+    else GL.BindFramebuffer(GL_FRAMEBUFFER, df >= 0 ? df : 0);
+    if (pb > 0) GL.BindBuffer(GL_PIXEL_PACK_BUFFER, pb);
+    if (al > 0) GL.PixelStorei(GL_PACK_ALIGNMENT, al);
     ensure_pix(w, h);
     for (unsigned y = 0; y < h; y++) {   // GL 은 아래가 0번 줄
       unsigned sy = g_hw.bottom_left_origin ? h - 1 - y : y;
@@ -410,7 +436,7 @@ static int load_gl(void) {
 #define GLF(f) if (!(*(void **)&GL.f = g_glp.get_proc("gl" #f))) { set_err("GL 함수 없음: gl" #f); return 0; }
   GLF(GenFramebuffers) GLF(BindFramebuffer) GLF(DeleteFramebuffers) GLF(GenTextures) GLF(BindTexture) GLF(DeleteTextures)
   GLF(TexImage2D) GLF(TexParameteri) GLF(FramebufferTexture2D) GLF(GenRenderbuffers) GLF(BindRenderbuffer) GLF(DeleteRenderbuffers)
-  GLF(RenderbufferStorage) GLF(FramebufferRenderbuffer) GLF(CheckFramebufferStatus) GLF(ReadPixels) GLF(PixelStorei)
+  GLF(RenderbufferStorage) GLF(FramebufferRenderbuffer) GLF(CheckFramebufferStatus) GLF(ReadPixels) GLF(PixelStorei) GLF(GetIntegerv) GLF(BindBuffer) GLF(GetError)
 #undef GLF
   return 1;
 }
