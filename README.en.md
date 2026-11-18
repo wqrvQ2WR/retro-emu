@@ -32,7 +32,10 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 - N64, GameCube, PSP and PS2 render with OpenGL. The host creates an offscreen GL context (CGL on macOS, SDL on Windows, EGL on Android, EAGL on iOS), hands it to the core, and reads each finished frame back so it shows up like every other system.
 - PSP and GameCube need support files (fonts, the `Sys` folder). The apps ship them and copy them to the system folder the first time.
 - These are heavy systems. GameCube and PS2 can be slow even on a computer depending on the game, and mostly slow on phones (especially iOS, which has no JIT). The PS2 core (Play!) still has low compatibility.
-- In this repository, homemade DS and PSP test programs (`tests/mk_nds.py`, `tests/mk_psp.py`) confirm the picture shows up. For N64, GameCube and PS2 only core loading and OpenGL setup were checked, not real games yet.
+- Checked with real games: 13 N64, DS, PSP and GameCube games show a picture on macOS, and one game per system was run on Android (Galaxy A32). PS2 was only checked as far as core loading and OpenGL setup. The homemade DS and PSP test programs (`tests/mk_nds.py`, `tests/mk_psp.py`) are used for the iOS simulator check.
+- On macOS, N64 uses the accurate Angrylion software renderer, because the default GLideN64 plugin shows a black screen on macOS OpenGL. It runs at 140-250 fps on Apple Silicon. Phones and Windows keep GLideN64.
+- The picture uses the aspect ratio the core reports, so N64 (output 640x240) shows at 4:3 and PSP at 16:9.
+- Some PSP games take 30-40 seconds to reach their first screen (e.g. GTA: Vice City Stories). A black screen during that time is just loading.
 
 - No ROMs are included. Bring your own.
 - PlayStation runs without a BIOS (HLE), so compatibility is limited. Put `scph5501.bin` in the system folder if you have one.
@@ -54,6 +57,23 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 - Battery saves (in-game saves) are stored separately, every 10 seconds and on exit.
 - Save files are written to a temporary file and then swapped in, so a crash mid-save keeps the old save.
 - Saving is disabled until the game has actually run, so you can't overwrite a slot with a blank boot state from the save list that opens on launch.
+
+### Pause menu and controls (macOS, Windows)
+
+- Pressing **Esc** in a game no longer quits. It opens a pause menu: **resume, save/load, controls, quit**. Esc again goes back to the game. On a controller, Select+Start opens it.
+- **Controls** lists every button of the current system with the key bound to it. Button names come straight from the core, so each system shows its own names (Cross/Circle on PSP, C Buttons and Z Trigger on N64, Z on GameCube, and so on).
+- Click a row (or pick it with the arrow keys and press Enter), then press the new key. If another button was using that key, that button is cleared. Esc cancels.
+- Key bindings are saved **per system**, and **기본값으로** (Reset) restores the defaults.
+- Esc, F1, F2 and F3 (plus F11 on Windows) are reserved for menus and can't be bound to game buttons.
+
+### Game lock
+
+Games used to be expensive, so you bought one and played it to the end. With a pile of ROMs it's easy to just sample everything, so this feature brings back that **one game at a time** focus.
+
+- A locked game's card is dimmed and marked **잠김** (Locked). Tapping it does not start the game.
+- To lock or unlock: **right-click** the card on macOS, **right-click** or press **L** on Windows, **long-press** the card on Android and iOS.
+- Unlocking shows a warning, and you confirm with "잠금 풀기" (Unlock). The warning says, in Korean: games used to be expensive so you dug into one to the end; unlocking dulls that, so it's best to unlock after you've really enjoyed the game you're playing.
+- Locks are stored per device (they are not synced).
 
 ### Syncing saves between devices
 
@@ -77,6 +97,8 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 
 - On N64 and GameCube the arrow keys drive the left stick. Gamepad sticks go through as real analog on analog systems.
 
+These are the default keys. Button keys (d-pad, A/B/X/Y, L/R, Start, Select, right stick) can be rebound per system under **Controls** in the Esc menu.
+
 | Key | Action |
 |---|---|
 | Arrow keys | D-pad |
@@ -85,12 +107,12 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 | Q / W | L / R |
 | E / R | L2 / R2 |
 | Return | Start |
-| Delete, Tab | Select |
+| Tab | Select |
 | I / J / K / L | Right stick (C buttons on N64) |
 | Mouse | DS touch screen |
 | F1 / F2 | Save / load (last chosen slot) |
 | F3 | Save list |
-| Esc | Close save list, quit game |
+| Esc | Pause menu (resume, save/load, controls, quit), close open panels |
 
 ### Windows
 
@@ -103,15 +125,17 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 - Drag ROMs onto the window or press **롬 추가** (Ctrl+O). Added ROMs are copied to `%APPDATA%\RetroEmu\roms`.
 - Same keys as macOS, plus F11 or Alt+Enter for fullscreen.
 - Works without a mouse: the library and save list are navigable with arrow keys and Enter, or a controller's d-pad and buttons.
-- In the library, right-click or Delete removes a game. In the save list, S saves and Delete removes a slot.
-- Controllers (Xbox, PlayStation, Switch Pro, ...) work on connect. Select+Start or the guide button opens the save list.
+- Right-clicking a game in the library opens a menu: **lock/unlock, remove from list**. On the keyboard, L locks and Delete removes. In the save list, S saves and Delete removes a slot.
+- On the controls screen, Delete resets that system's keys.
+- Controllers (Xbox, PlayStation, Switch Pro, ...) work on connect. Select+Start or the guide button opens the pause menu.
 - Drawn with SDL2. The same code builds on macOS, which is where the screenshots above come from.
 
 ### Android
 
 <img src="docs/phone-game.png" width="25%" alt="Playing on Android">
 
-- Import ROMs with **+** in the top right. Zip files are extracted.
+- Import ROMs with **+** in the top right. You can pick many at once (long-press in the file picker to select all), and zip files are extracted. Multi-GB GameCube and PSP games take a few minutes to import; progress is shown meanwhile.
+- Long-press a card for **lock/unlock, remove from list**.
 - On-screen buttons match the system (shoulder and X/Y buttons only where the console had them).
 - The in-game menu (top right) has:
   - **Button size**: normal / large
@@ -129,6 +153,7 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 
 - Same layout as Android: game on top and buttons below in portrait, translucent buttons over the game in landscape.
 - Pick ROMs from the Files app with **롬 추가** (Add ROM), or drop them into **On My iPhone > 레트로 에뮬** in Files. Zip files are extracted.
+- Long-press a card for **lock/unlock, delete**.
 - The menu has button size (normal / large) and d-pad style (cross / joystick).
 - Game controllers (MFi, Xbox, PlayStation) and Bluetooth keyboards work. Select+Start, the home button or Esc opens the menu.
 - Pauses and auto-saves when you go to the home screen or lock the phone.
@@ -227,6 +252,10 @@ Without Xcode, `./ios/build.sh catalyst` builds the same UIKit UI as a Mac app (
 | Windows | `%APPDATA%\RetroEmu\` (`roms\`, `saves\`, `system\`) |
 | Android | App internal storage `files/` (`roms/`, `saves/`, `system/`) |
 | iOS | The app's Documents, visible in Files (`roms/`, `saves/`, `system/`) |
+
+- macOS: key bindings live in the app's defaults (`keymap.<system>` in `defaults read com.hayoonjae.retroemu`), locks in `library.json` (`locked`).
+- Windows: key bindings in `keys.txt`, locks in `locked.txt` (one ROM file name per line).
+- Android and iOS: locks are kept in app settings by ROM file name.
 
 Files in `saves/` are named `<ROM file name>.<slot>.state` (state), `.png` (screenshot) and `.srm` (battery save). Slots are `auto` and `1` to `6`.
 
