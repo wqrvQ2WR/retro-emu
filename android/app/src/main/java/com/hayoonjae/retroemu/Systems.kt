@@ -37,7 +37,7 @@ enum class GameSystem(val title: String, val coreLib: String, val exts: List<Str
     /** 처음 켤 때 시스템 폴더로 복사할 앱 안 자료(assets/sysassets/<이름>) */
     val sysAssets get() = when (this) { PSP -> "PPSSPP"; GC -> "dolphin-emu"; else -> null }
     /** 버튼 이름(PS 계열은 도형) */
-    fun label(bit: Int) = if (this == PS1 || this == PS2 || this == PSP) when (bit) { Pad.X -> "삼각"; Pad.Y -> "사각"; Pad.A -> "동그"; Pad.B -> "엑스"; else -> null } else null
+    fun label(bit: Int) = if (this == PS1 || this == PS2 || this == PSP) when (bit) { Pad.X -> PS_TRI; Pad.Y -> PS_SQ; Pad.A -> PS_CIR; Pad.B -> PS_CROSS; else -> null } else null
 
     companion object {
         fun fromName(name: String): GameSystem? {

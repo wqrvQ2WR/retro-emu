@@ -134,8 +134,8 @@ final class ControlsView: UIView {
       let r = min(29 * u * k, padRadius * 0.42), d = r * 1.72
       let ps1 = system == .ps1 || system == .ps2 || system == .psp
       let set: [(Int, String, CGFloat, CGFloat)] = [
-        (RH_X, ps1 ? "삼각" : "X", 0, -d), (RH_Y, ps1 ? "사각" : "Y", -d, 0),
-        (RH_A, ps1 ? "동그" : "A", d, 0), (RH_B, ps1 ? "엑스" : "B", 0, d),
+        (RH_X, ps1 ? "@ps-tri" : "X", 0, -d), (RH_Y, ps1 ? "@ps-sq" : "Y", -d, 0),
+        (RH_A, ps1 ? "@ps-cir" : "A", d, 0), (RH_B, ps1 ? "@ps-cross" : "B", 0, d),
       ]
       for (bit, l, dx, dy) in set {
         buttons.append(Button(bit: bit, label: l, rect: CGRect(x: face.x + dx - r, y: face.y + dy - r, width: r * 2, height: r * 2), round: true))
@@ -260,10 +260,43 @@ final class ControlsView: UIView {
     for b in buttons {
       let path = b.round ? UIBezierPath(ovalIn: b.rect) : UIBezierPath(roundedRect: b.rect, cornerRadius: b.rect.height / 2)
       fill(path, pressed(b.bit))
+      if b.label.hasPrefix("@ps") { psShape(b.label, in: b.rect, on: pressed(b.bit), dim: dim); continue }
       let size = b.round ? b.rect.height * (b.label.count > 1 ? 0.26 : 0.36) : b.rect.height * 0.42
       label(b.label, in: b.rect, size: size)
     }
   }
+}
+
+/// 플레이스테이션 버튼 모양(글자 대신 그림). 평소엔 원래 색, 누르면 흰색.
+private func psShape(_ kind: String, in r: CGRect, on: Bool, dim: CGFloat) {
+  let w = r.width * 0.44, sw = w * 0.13, m = sw / 2
+  let box = CGRect(x: r.midX - w / 2, y: r.midY - w / 2, width: w, height: w)
+  let c: UIColor = on ? .white : {
+    switch kind {
+    case "@ps-tri": return UIColor(red: 0.18, green: 0.83, blue: 0.54, alpha: 1)
+    case "@ps-cir": return UIColor(red: 1.0, green: 0.30, blue: 0.42, alpha: 1)
+    case "@ps-cross": return UIColor(red: 0.30, green: 0.64, blue: 1.0, alpha: 1)
+    default: return UIColor(red: 1.0, green: 0.44, blue: 0.81, alpha: 1)
+    }
+  }()
+  c.withAlphaComponent(dim).setStroke()
+  let p = UIBezierPath()
+  switch kind {
+  case "@ps-tri":
+    let h = (w - 2 * m) * 0.866, top = box.minY + (w - h) / 2
+    p.move(to: CGPoint(x: box.midX, y: top)); p.addLine(to: CGPoint(x: box.maxX - m, y: top + h))
+    p.addLine(to: CGPoint(x: box.minX + m, y: top + h)); p.close()
+  case "@ps-cir":
+    p.append(UIBezierPath(ovalIn: box.insetBy(dx: m, dy: m)))
+  case "@ps-cross":
+    let a = w * 0.12
+    p.move(to: CGPoint(x: box.minX + a, y: box.minY + a)); p.addLine(to: CGPoint(x: box.maxX - a, y: box.maxY - a))
+    p.move(to: CGPoint(x: box.maxX - a, y: box.minY + a)); p.addLine(to: CGPoint(x: box.minX + a, y: box.maxY - a))
+  default:
+    p.append(UIBezierPath(rect: box.insetBy(dx: w * 0.1, dy: w * 0.1)))
+  }
+  p.lineWidth = sw; p.lineCapStyle = .round; p.lineJoinStyle = .round
+  p.stroke()
 }
 
 struct ControlsRep: UIViewRepresentable {

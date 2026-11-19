@@ -543,7 +543,41 @@ fun HoldButton(engine: Engine, bit: Int, label: String, size: Float = 56f, shape
                 down = false; engine.press(bit, false)
             }
         }, contentAlignment = Alignment.Center) {
-        Text(label, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = (size / 3.2f).sp)
+        if (label.startsWith("@ps")) PsShape(label, down, size * 0.44f)
+        else Text(label, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = (size / 3.2f).sp)
+    }
+}
+
+// 플레이스테이션 버튼 모양(글자 대신 그림). 평소엔 원래 색, 누르면 흰색.
+const val PS_TRI = "@ps-tri"
+const val PS_CIR = "@ps-cir"
+const val PS_CROSS = "@ps-cross"
+const val PS_SQ = "@ps-sq"
+
+@Composable
+fun PsShape(kind: String, pressed: Boolean, sizeDp: Float) {
+    val c = if (pressed) Color.White else when (kind) {
+        PS_TRI -> Color(0xFF2FD38A); PS_CIR -> Color(0xFFFF4D6A); PS_CROSS -> Color(0xFF4DA3FF); else -> Color(0xFFFF6FCF)
+    }
+    Canvas(Modifier.size(dp(sizeDp))) {
+        val w = size.width; val sw = w * 0.13f
+        val st = androidx.compose.ui.graphics.drawscope.Stroke(width = sw, cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            join = androidx.compose.ui.graphics.StrokeJoin.Round)
+        val m = sw / 2
+        when (kind) {
+            PS_TRI -> {
+                val h = (w - 2 * m) * 0.866f; val top = (w - h) / 2
+                val path = androidx.compose.ui.graphics.Path().apply { moveTo(w / 2, top); lineTo(w - m, top + h); lineTo(m, top + h); close() }
+                drawPath(path, c, style = st)
+            }
+            PS_CIR -> drawCircle(c, radius = w / 2 - m, style = st)
+            PS_CROSS -> {
+                val a = w * 0.12f; val b = w - a
+                drawLine(c, Offset(a, a), Offset(b, b), sw, androidx.compose.ui.graphics.StrokeCap.Round)
+                drawLine(c, Offset(b, a), Offset(a, b), sw, androidx.compose.ui.graphics.StrokeCap.Round)
+            }
+            else -> { val a = w * 0.1f; drawRect(c, Offset(a, a), androidx.compose.ui.geometry.Size(w - 2 * a, w - 2 * a), style = st) }
+        }
     }
 }
 
