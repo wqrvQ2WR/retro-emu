@@ -18,8 +18,16 @@ enum KeyMap {
     (16, 34), (17, 40), (18, 38), (19, 37),                          // I K J L
   ]))
 
+  /// 기종별 기본 키. PSP 는 오른쪽 스틱이 없어서 I/J/K/L 을 왼쪽 스틱(20~23)으로(PPSSPP 와 같음).
+  /// 스틱이 주된 기종(N64·게임큐브)이 아닌 아날로그 기종은 왼쪽 스틱 줄이 따로 생긴다.
+  static func defaults(for s: GameSystem) -> [Int: UInt16] {
+    var m = defaults
+    if s == .psp { for i in 0..<4 { m[20 + i] = m[16 + i]; m[16 + i] = nil } }
+    return m
+  }
+
   static func load(_ s: GameSystem) -> [Int: UInt16] {
-    guard let d = UserDefaults.standard.dictionary(forKey: "keymap.\(s.rawValue)") as? [String: Int] else { return defaults }
+    guard let d = UserDefaults.standard.dictionary(forKey: "keymap.\(s.rawValue)") as? [String: Int] else { return defaults(for: s) }
     var m: [Int: UInt16] = [:]
     for (k, v) in d { if let a = Int(k) { m[a] = UInt16(v) } }
     return m
@@ -89,7 +97,10 @@ enum KeyMap {
         out.append((a, n))
       }
     }
-    if s.hasAnalog {
+    if s.hasAnalog && !s.stickFirst {
+      for i in 0..<4 { out.append((20 + i, "왼쪽 스틱 " + dirs[i])) }
+    }
+    if s.hasAnalog && s != .psp {   // PSP 는 오른쪽 스틱이 없다(코어가 이름만 알려 줌)
       for i in 0..<4 {
         let base = core[16 + i] ?? "오른쪽 스틱"
         out.append((16 + i, base + " " + dirs[i]))

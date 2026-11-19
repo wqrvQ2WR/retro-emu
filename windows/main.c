@@ -261,6 +261,7 @@ static double frame_acc;
 static Uint64 last_counter;
 static int frames_run;
 static uint32_t key_mask, pad_mask;
+static uint32_t lstick_keys;   // 왼쪽 스틱용 키(PSP 등): 위·아래·왼·오 비트 0~3
 static uint32_t rstick_keys;   // I/J/K/L(오른쪽 스틱): 위·아래·왼·오 비트 0~3
 static SDL_FRect game_rect;    // 게임 그림이 그려진 자리(마우스 터치 좌표 계산용)
 static SDL_AudioDeviceID audio;
@@ -559,7 +560,7 @@ static void panel_open(int open) {
   last_counter = SDL_GetPerformanceCounter(); frame_acc = 0;
 }
 
-#define NACT_ROWS 20
+#define NACT_ROWS 24
 // Esc 일시정지 메뉴: 이어하기 / 저장·불러오기 / 조작법 / 나가기
 static struct { int open, sel; } pmenu;
 static const char *PMENU[] = {"이어하기", "저장 / 불러오기", "조작법", "화면 돌리기", "나가기"};
@@ -758,6 +759,7 @@ static void run_frames(void) {
     if (keys & (1u << RH_UP)) ly -= 1; if (keys & (1u << RH_DOWN)) ly += 1;
     keys &= ~((1u << RH_LEFT) | (1u << RH_RIGHT) | (1u << RH_UP) | (1u << RH_DOWN));
   }
+  if (lstick_keys & 1) ly -= 1; if (lstick_keys & 2) ly += 1; if (lstick_keys & 4) lx -= 1; if (lstick_keys & 8) lx += 1;
   if (rstick_keys & 1) ry -= 1; if (rstick_keys & 2) ry += 1; if (rstick_keys & 4) rx -= 1; if (rstick_keys & 8) rx += 1;
   if (pad) {
     double px = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0, py = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0;
@@ -790,9 +792,9 @@ static void run_frames(void) {
 
 // ---------------------------------------------------------------- 입력
 
-// 기종별 키 배정. 동작 0~15 는 패드 버튼(RH_*), 16~19 는 오른쪽 스틱 위·아래·왼쪽·오른쪽.
+// 기종별 키 배정. 동작 0~15 는 패드 버튼(RH_*), 16~19 오른쪽 스틱, 20~23 왼쪽 스틱 위·아래·왼쪽·오른쪽.
 // data/keys.txt 에 "기종 동작 스캔코드" 한 줄씩(맥·안드로이드와 따로 저장).
-#define NACT 20
+#define NACT 24   // 0~15 패드, 16~19 오른쪽 스틱, 20~23 왼쪽 스틱(스틱이 주된 기종 말고 아날로그 기종용)
 static SDL_Scancode keymap[NSYS][NACT];
 static const SDL_Scancode KEY_DEFAULT[NACT] = {
   [RH_UP] = SDL_SCANCODE_UP, [RH_DOWN] = SDL_SCANCODE_DOWN, [RH_LEFT] = SDL_SCANCODE_LEFT, [RH_RIGHT] = SDL_SCANCODE_RIGHT,
@@ -806,8 +808,14 @@ static int key_reserved(SDL_Scancode k) {
   return k == SDL_SCANCODE_ESCAPE || k == SDL_SCANCODE_F1 || k == SDL_SCANCODE_F2 || k == SDL_SCANCODE_F3 || k == SDL_SCANCODE_F11;
 }
 static void keys_path(char *out, size_t n) { snprintf(out, n, "%s/keys.txt", data_dir); }
+/// 기종별 기본 키. PSP 는 오른쪽 스틱이 없어서 I/J/K/L 을 왼쪽 스틱으로(PPSSPP 와 같음).
+static void key_defaults(int s, SDL_Scancode *out) {
+  memcpy(out, KEY_DEFAULT, sizeof KEY_DEFAULT);
+  if (!strcmp(SYS[s].id, "psp")) for (int i = 0; i < 4; i++) { out[20 + i] = out[16 + i]; out[16 + i] = 0; }
+}
+static int key_is_default(int s) { SDL_Scancode d[NACT]; key_defaults(s, d); return !memcmp(keymap[s], d, sizeof d); }
 static void keys_load(void) {
-  for (int s = 0; s < NSYS; s++) memcpy(keymap[s], KEY_DEFAULT, sizeof KEY_DEFAULT);
+  for (int s = 0; s < NSYS; s++) key_defaults(s, keymap[s]);
   char p[2100]; keys_path(p, sizeof p);
   size_t n; char *t = read_all(p, &n); if (!t) return;
   t = realloc(t, n + 1); t[n] = 0;
@@ -826,7 +834,7 @@ static void keys_save(void) {
   char p[2100]; keys_path(p, sizeof p);
   char *b = malloc(NSYS * NACT * 40 + 1); size_t len = 0;
   for (int s = 0; s < NSYS; s++) {
-    if (!memcmp(keymap[s], KEY_DEFAULT, sizeof KEY_DEFAULT)) continue;   // 기본값인 기종은 안 적는다
+    if (key_is_default(s)) continue;   // 기본값인 기종은 안 적는다
     int any = 0;
     for (int a = 0; a < NACT; a++) if (keymap[s][a]) { len += sprintf(b + len, "%s %d %d\n", SYS[s].id, a, (int)keymap[s][a]); any = 1; }
     if (!any) len += sprintf(b + len, "%s 0 0\n", SYS[s].id);
@@ -969,7 +977,11 @@ static void ctl_open(void) {
     else continue;
     ctl.act[ctl.n++] = a;
   }
-  if (sy->analog) for (int i = 0; i < 4 && ctl.n < NACT_ROWS; i++) {
+  if (sy->analog && !sy->stick_first) for (int i = 0; i < 4 && ctl.n < NACT_ROWS; i++) {
+    snprintf(ctl.name[ctl.n], 96, "왼쪽 스틱 %s", dirs[i]);
+    ctl.act[ctl.n++] = 20 + i;
+  }
+  if (sy->analog && strcmp(sy->id, "psp")) for (int i = 0; i < 4 && ctl.n < NACT_ROWS; i++) {   // PSP 는 오른쪽 스틱이 없다
     const char *nm = rh_button_name(16 + i);
     snprintf(ctl.name[ctl.n], 96, "%s %s", nm ? nm : "오른쪽 스틱", dirs[i]);
     ctl.act[ctl.n++] = 16 + i;
@@ -978,8 +990,8 @@ static void ctl_open(void) {
 }
 static void ctl_close(void) { ctl.open = 0; ctl.capture = -1; pmenu.open = 1; pmenu.sel = 2; }   // 일시정지 메뉴로 돌아감(오디오는 멈춘 채)
 static void ctl_reset(void) {
-  memcpy(keymap[cur->sys], KEY_DEFAULT, sizeof KEY_DEFAULT); keys_save();
-  key_mask = 0; rstick_keys = 0; toast("기본 키로 돌렸어요");
+  key_defaults(cur->sys, keymap[cur->sys]); keys_save();
+  key_mask = 0; rstick_keys = 0; lstick_keys = 0; toast("기본 키로 돌렸어요");
 }
 static void ctl_key(SDL_Scancode k) {
   int a = ctl.capture; ctl.capture = -1;
@@ -987,7 +999,7 @@ static void ctl_key(SDL_Scancode k) {
   if (key_reserved(k)) { toast("그 키는 메뉴용이라 못 써요"); return; }
   for (int i = 0; i < NACT; i++) if (keymap[cur->sys][i] == k) keymap[cur->sys][i] = 0;   // 같은 키를 쓰던 동작은 비움
   keymap[cur->sys][a] = k; keys_save();
-  key_mask = 0; rstick_keys = 0;
+  key_mask = 0; rstick_keys = 0; lstick_keys = 0;
 }
 static void ctl_nav(int n) {
   if (n == NAV_UP && ctl.sel >= 2) ctl.sel -= 2;
@@ -1587,6 +1599,7 @@ int main(int argc, char **argv) {
         if (down && (k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)))) { toggle_fullscreen(); break; }
         if (screen == PLAY && !panel.open && !pmenu.open && !ctl.open && !confirm.open) {
           int act = key_action(k);
+          if (act >= 20) { int lb = 1 << (act - 20); if (down) lstick_keys |= lb; else lstick_keys &= ~lb; break; }
           if (act >= 16) { int rb = 1 << (act - 16); if (down) rstick_keys |= rb; else rstick_keys &= ~rb; break; }
           if (act >= 0) { if (down) key_mask |= 1u << act; else key_mask &= ~(1u << act); }
           if (down && !e.key.repeat) {

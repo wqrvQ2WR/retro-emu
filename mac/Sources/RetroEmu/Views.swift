@@ -227,7 +227,10 @@ struct GameSurface: NSViewRepresentable {
     v.onPointer = { x, y, down in emu.setPointer(x, y, down && !context.coordinator.panelOpen) }
     v.onKey = { code, down in
       if let a = emu.keyLookup[code], !KeyMap.reserved.contains(code), !context.coordinator.panelOpen {
-        if a >= 16 {
+        if a >= 20 {
+          let r = UInt32(1) << UInt32(a - 20)
+          if down { emu.leftKeys |= r } else { emu.leftKeys &= ~r }
+        } else if a >= 16 {
           let r = UInt32(1) << UInt32(a - 16)
           if down { emu.rightKeys |= r } else { emu.rightKeys &= ~r }
         } else {
@@ -404,7 +407,7 @@ struct PlayView: View {
   func applyKeys(_ m: [Int: UInt16]) {
     keymap = m
     emu.keyLookup = KeyMap.lookup(m)
-    emu.keyMask = 0; emu.rightKeys = 0
+    emu.keyMask = 0; emu.rightKeys = 0; emu.leftKeys = 0
   }
 
   func controlsKey(_ code: UInt16) {

@@ -25,6 +25,8 @@ final class Emulator {
   var keyMask: UInt32 = 0
   /// 오른쪽 스틱용 키(I/J/K/L) 상태: 위·아래·왼·오 비트 0~3
   var rightKeys: UInt32 = 0
+  /// 왼쪽 스틱용 키 상태(PSP 등): 위·아래·왼·오 비트 0~3
+  var leftKeys: UInt32 = 0
   private var system: GameSystem = .nes
   var currentSystem: GameSystem { system }
   /// 키 -> 동작(KeyMap). 메인 스레드에서 쓴다.
@@ -182,6 +184,10 @@ final class Emulator {
       if keys & (1 << UInt32(RH_DOWN)) != 0 { ly += 1 }
       keys &= ~dirs
     }
+    if leftKeys & 1 != 0 { ly -= 1 }
+    if leftKeys & 2 != 0 { ly += 1 }
+    if leftKeys & 4 != 0 { lx -= 1 }
+    if leftKeys & 8 != 0 { lx += 1 }
     var rx = 0.0, ry = 0.0
     if rightKeys & 1 != 0 { ry -= 1 }
     if rightKeys & 2 != 0 { ry += 1 }
