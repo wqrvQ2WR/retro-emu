@@ -148,7 +148,7 @@ These are the default keys. Button keys (d-pad, A/B/X/Y, L/R, Start, Select, rig
 <img src="docs/phone-game.png" width="25%" alt="Playing on Android">
 
 - Import ROMs with **+** in the top right. You can pick many at once (long-press in the file picker to select all), and zip files are extracted. Multi-GB GameCube and PSP games take a few minutes to import; progress is shown meanwhile.
-- Long-press a card for **lock/unlock, remove from list**.
+- Long-press a card for **lock/unlock, add to home screen, remove from list**. **Add to home screen** pins an icon (the console photo on the system color) that starts that game directly. Locked games won't start from the shortcut either.
 - On-screen buttons match the system (shoulder and X/Y buttons only where the console had them).
 - The in-game menu (top right) has:
   - **Button size**: normal / large
