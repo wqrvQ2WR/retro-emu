@@ -393,8 +393,8 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
             }
         } else {
             Column(Modifier.fillMaxSize().systemBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) { Screen(engine, sys) }
-                Spacer(Modifier.weight(1f))
+                // 화면은 버튼을 다 놓고 남은 자리 안에서 비율을 지켜 최대로(DS 처럼 세로로 긴 화면이 버튼을 밀어내지 않게)
+                Box(Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp, bottom = 6.dp), contentAlignment = Alignment.TopCenter) { Screen(engine, sys) }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Shoulders(engine, sys, true, k); Shoulders(engine, sys, false, k)
                 }
@@ -540,7 +540,7 @@ fun Screen(engine: Engine, sys: GameSystem) {
                 })
             }
         },
-        modifier = Modifier.aspectRatio(engine.aspect.toFloat().coerceIn(0.5f, 3f)).fillMaxWidth().heightIn(max = 4000.dp).background(Color.Black)
+        modifier = Modifier.aspectRatio(engine.aspect.toFloat().coerceIn(0.5f, 3f)).background(Color.Black)
     )
 }
 
