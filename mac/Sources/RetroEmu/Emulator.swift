@@ -30,7 +30,19 @@ final class Emulator {
   private var system: GameSystem = .nes
   var currentSystem: GameSystem { system }
   /// 키 -> 동작(KeyMap). 메인 스레드에서 쓴다.
-  var keyLookup: [UInt16: Int] = [:]
+  var keyLookup: [UInt16: Int] = [:] {
+    didSet {
+      // 마우스 움직임(위·아래·왼·오) -> 동작. 에뮬 큐에서 읽는다.
+      let m = KeyMap.Mouse.moves.map { keyLookup[$0] }
+      queue.async { self.moveMap = m }
+    }
+  }
+  /// 마우스 움직임 배정이 하나라도 있으면 게임 중 커서를 잡는다
+  var usesMouseMove: Bool { keyLookup.keys.contains(where: KeyMap.isMouseMove) }
+  private var moveMap: [Int?] = [nil, nil, nil, nil]
+  private var mdx = 0.0, mdy = 0.0
+  /// 마우스가 움직인 만큼(포인트, 아래·오른쪽이 +). 메인 스레드에서 부른다.
+  func addMouse(_ dx: Double, _ dy: Double) { queue.async { self.mdx += dx; self.mdy += dy } }
   /// 새 영상이 나오면 호출(메인 스레드)
   var onFrame: ((CGImage, Double) -> Void)?
   var onToast: ((String) -> Void)?
@@ -193,6 +205,18 @@ final class Emulator {
     if rightKeys & 2 != 0 { ry += 1 }
     if rightKeys & 4 != 0 { rx -= 1 }
     if rightKeys & 8 != 0 { rx += 1 }
+    // 마우스 움직임: 이번 프레임에 움직인 만큼 스틱을 기울이거나(빠를수록 많이), 버튼이면 그동안 누른다
+    let amounts = [max(0, -mdy), max(0, mdy), max(0, -mdx), max(0, mdx)]   // 위·아래·왼·오
+    mdx = 0; mdy = 0
+    for (i, act) in moveMap.enumerated() {
+      guard let a = act, amounts[i] > 0.3 else { continue }
+      let s = min(1, amounts[i] / 5)   // 한 프레임에 5포인트면 끝까지
+      let sx: Double = i == 2 ? -s : i == 3 ? s : 0, sy: Double = i == 0 ? -s : i == 1 ? s : 0
+      if a >= 20 || (system.stickFirst && a >= Int(RH_UP) && a <= Int(RH_RIGHT)) { lx += sx; ly += sy }
+      else if a >= 16 { rx += sx; ry += sy }
+      else { keys |= 1 << UInt32(a) }
+    }
+    lx = max(-1, min(1, lx)); ly = max(-1, min(1, ly)); rx = max(-1, min(1, rx)); ry = max(-1, min(1, ry))
     // 게임패드 스틱이 더 크게 기울었으면 그걸 쓴다
     if let pad = GCController.controllers().first?.extendedGamepad {
       let pl = pad.leftThumbstick, pr = pad.rightThumbstick

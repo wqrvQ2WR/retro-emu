@@ -7,6 +7,14 @@ import CRhost
 /// 기종별 키 배정. 동작 번호 0~15 는 패드 버튼(RH_*), 16~19 는 오른쪽 스틱 위·아래·왼쪽·오른쪽.
 /// 기종마다 UserDefaults "keymap.<기종>" 에 [동작: 키코드] 로 저장한다.
 enum KeyMap {
+  /// 마우스도 키처럼 배정한다(맥 키코드와 안 겹치는 0xF000 대 번호). 움직임은 위·아래·왼쪽·오른쪽 넷.
+  enum Mouse {
+    static let left: UInt16 = 0xF001, right: UInt16 = 0xF002, middle: UInt16 = 0xF003
+    static let up: UInt16 = 0xF010, down: UInt16 = 0xF011, moveLeft: UInt16 = 0xF012, moveRight: UInt16 = 0xF013
+    static let moves = [up, down, moveLeft, moveRight]
+  }
+  static func isMouseMove(_ k: UInt16) -> Bool { k >= Mouse.up && k <= Mouse.moveRight }
+
   /// 메뉴용이라 게임 버튼으로 못 쓰는 키: Esc, F1, F2, F3
   static let reserved: Set<UInt16> = [53, 122, 120, 99]
 
@@ -56,6 +64,16 @@ enum KeyMap {
 
   /// 키 이름(맥 가상 키코드)
   static func name(_ k: UInt16) -> String {
+    switch k {
+    case Mouse.left: return "마우스 왼쪽 클릭"
+    case Mouse.right: return "마우스 오른쪽 클릭"
+    case Mouse.middle: return "마우스 가운데 클릭"
+    case Mouse.up: return "마우스 위로"
+    case Mouse.down: return "마우스 아래로"
+    case Mouse.moveLeft: return "마우스 왼쪽으로"
+    case Mouse.moveRight: return "마우스 오른쪽으로"
+    default: break
+    }
     let t: [UInt16: String] = [
       0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G", 6: "Z", 7: "X", 8: "C", 9: "V", 11: "B", 12: "Q", 13: "W", 14: "E",
       15: "R", 16: "Y", 17: "T", 18: "1", 19: "2", 20: "3", 21: "4", 22: "6", 23: "5", 24: "=", 25: "9", 26: "7", 27: "-",
@@ -130,7 +148,7 @@ struct ControlsPanel: View {
           Text("조작법").font(.system(size: 22, weight: .heavy)).foregroundStyle(accent)
           Text(system.title).font(.system(size: 15, weight: .bold)).foregroundColor(.black.opacity(0.55))
           Spacer()
-          Text(capturing != nil ? "새 키를 누르세요 · Esc 취소" : "줄을 누르고 새 키 · Esc 뒤로")
+          Text(capturing != nil ? "새 키·마우스 클릭·마우스 움직임 · Esc 취소" : "줄을 누르고 새 키(마우스도 돼요) · Esc 뒤로")
             .font(.system(size: 12, weight: .medium)).foregroundColor(.black.opacity(0.45))
         }
         ScrollViewReader { proxy in

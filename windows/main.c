@@ -262,6 +262,15 @@ static Uint64 last_counter;
 static int frames_run;
 static uint32_t key_mask, pad_mask;
 static uint32_t lstick_keys;   // 왼쪽 스틱용 키(PSP 등): 위·아래·왼·오 비트 0~3
+static double mouse_dx, mouse_dy;   // 이번 프레임에 마우스가 움직인 만큼(게임 중)
+static double cap_dx, cap_dy;       // 조작법에서 마우스 움직임을 받을 때 모은 양
+// 마우스도 키처럼 배정한다(스캔코드와 안 겹치는 1000 대 번호). 움직임은 위·아래·왼쪽·오른쪽 넷.
+#define MOUSE_LEFT 1001
+#define MOUSE_RIGHT 1002
+#define MOUSE_MIDDLE 1003
+#define MOUSE_UP 1010   // 1010~1013: 위·아래·왼쪽·오른쪽으로 움직임
+static int key_action(SDL_Scancode k);
+
 static uint32_t rstick_keys;   // I/J/K/L(오른쪽 스틱): 위·아래·왼·오 비트 0~3
 static SDL_FRect game_rect;    // 게임 그림이 그려진 자리(마우스 터치 좌표 계산용)
 static SDL_AudioDeviceID audio;
@@ -760,6 +769,19 @@ static void run_frames(void) {
     keys &= ~((1u << RH_LEFT) | (1u << RH_RIGHT) | (1u << RH_UP) | (1u << RH_DOWN));
   }
   if (lstick_keys & 1) ly -= 1; if (lstick_keys & 2) ly += 1; if (lstick_keys & 4) lx -= 1; if (lstick_keys & 8) lx += 1;
+  // 마우스 움직임: 움직인 만큼 스틱을 기울이거나(빠를수록 많이), 버튼이면 그동안 누른다
+  {
+    double amt[4] = {fmax(0, -mouse_dy), fmax(0, mouse_dy), fmax(0, -mouse_dx), fmax(0, mouse_dx)};
+    mouse_dx = mouse_dy = 0;
+    for (int i = 0; i < 4; i++) {
+      int act = key_action((SDL_Scancode)(MOUSE_UP + i));
+      if (act < 0 || amt[i] < 0.3) continue;
+      double v = fmin(1, amt[i] / 5), ax = i == 2 ? -v : i == 3 ? v : 0, ay = i == 0 ? -v : i == 1 ? v : 0;
+      if (act >= 20 || (sy->stick_first && act >= RH_UP && act <= RH_RIGHT)) { lx += ax; ly += ay; }
+      else if (act >= 16) { rx += ax; ry += ay; }
+      else keys |= 1u << act;
+    }
+  }
   if (rstick_keys & 1) ry -= 1; if (rstick_keys & 2) ry += 1; if (rstick_keys & 4) rx -= 1; if (rstick_keys & 8) rx += 1;
   if (pad) {
     double px = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0, py = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0;
@@ -767,6 +789,7 @@ static void run_frames(void) {
     if (fabs(px) + fabs(py) > fabs(lx) + fabs(ly) && fabs(px) + fabs(py) > 0.25) { lx = px; ly = py; }
     if (fabs(qx) + fabs(qy) > fabs(rx) + fabs(ry) && fabs(qx) + fabs(qy) > 0.25) { rx = qx; ry = qy; }
   }
+  lx = fmax(-1, fmin(1, lx)); ly = fmax(-1, fmin(1, ly)); rx = fmax(-1, fmin(1, rx)); ry = fmax(-1, fmin(1, ry));
   rh_set_analog(0, lx, ly); rh_set_analog(1, rx, ry);
   while (frame_acc >= ft) {
     rh_set_input(keys | pad_mask);
@@ -842,11 +865,34 @@ static void keys_save(void) {
   if (len) write_all(p, b, len); else remove_u8(p);
   free(b);
 }
+static int mouse_code(int sdl_button) {
+  return sdl_button == SDL_BUTTON_LEFT ? MOUSE_LEFT : sdl_button == SDL_BUTTON_RIGHT ? MOUSE_RIGHT : sdl_button == SDL_BUTTON_MIDDLE ? MOUSE_MIDDLE : 0;
+}
+static const char *key_name(int k) {
+  switch (k) {
+  case MOUSE_LEFT: return "마우스 왼쪽 클릭"; case MOUSE_RIGHT: return "마우스 오른쪽 클릭"; case MOUSE_MIDDLE: return "마우스 가운데 클릭";
+  case MOUSE_UP: return "마우스 위로"; case MOUSE_UP + 1: return "마우스 아래로";
+  case MOUSE_UP + 2: return "마우스 왼쪽으로"; case MOUSE_UP + 3: return "마우스 오른쪽으로";
+  }
+  return SDL_GetScancodeName((SDL_Scancode)k);
+}
 /// 지금 기종에서 이 키가 맡은 동작(-1: 없음)
 static int key_action(SDL_Scancode k) {
   if (!cur || !k || key_reserved(k)) return -1;
   for (int a = 0; a < NACT; a++) if (keymap[cur->sys][a] == k) return a;
   return -1;
+}
+/// 동작 하나를 누르거나 뗀다(키보드·마우스 버튼 공용)
+static void press_action(int act, int down) {
+  if (act >= 20) { int b = 1 << (act - 20); if (down) lstick_keys |= b; else lstick_keys &= ~b; }
+  else if (act >= 16) { int b = 1 << (act - 16); if (down) rstick_keys |= b; else rstick_keys &= ~b; }
+  else if (act >= 0) { if (down) key_mask |= 1u << act; else key_mask &= ~(1u << act); }
+}
+/// 이 기종에 마우스 움직임 배정이 있는지(있으면 게임 중 커서를 잡는다)
+static int uses_mouse_move(void) {
+  if (!cur) return 0;
+  for (int a = 0; a < NACT; a++) if (keymap[cur->sys][a] >= MOUSE_UP && keymap[cur->sys][a] <= MOUSE_UP + 3) return 1;
+  return 0;
 }
 // 패드: 위치 기준(아래=B, 오른쪽=A, 왼쪽=Y, 위=X)
 static int pad_bit(int b) {
@@ -1216,7 +1262,7 @@ static void draw_ctl(void) {
   rrect(px, py, pw, ph, 24 * S, a, b, 2);
   text_accent("조작법", px + 22 * S, py + 20 * S, 22);
   text(SYS[cur->sys].title, px + 22 * S + text_w("조작법", 22, 1) + 26 * S, py + 27 * S, 15, 1, rgba(0, 0, 0, 140), 0);
-  text(ctl.capture >= 0 ? "새 키를 누르세요 · Esc 취소" : "줄을 누르고 새 키 · Del 기본값 · Esc 뒤로", px + pw - 22 * S, py + 27 * S, 12, 0, rgba(0, 0, 0, 115), 2);
+  text(ctl.capture >= 0 ? "새 키·마우스 클릭·마우스 움직임 · Esc 취소" : "줄을 누르고 새 키(마우스도 돼요) · Del 기본값 · Esc 뒤로", px + pw - 22 * S, py + 27 * S, 12, 0, rgba(0, 0, 0, 115), 2);
   float cw = (pw - 44 * S - 10 * S) / 2;
   for (int i = 0; i < ctl.n; i++) {
     float x = px + 22 * S + (i % 2) * (cw + 10 * S), y = py + 66 * S + (i / 2) * (rh + gap);
@@ -1224,7 +1270,7 @@ static void draw_ctl(void) {
     if (i == ctl.sel) rrect(x - 3 * S, y - 3 * S, cw + 6 * S, rh + 6 * S, 15 * S, PINK, SKY, 3);
     rrect(x, y, cw, rh, 12 * S, wc, wc, 0);
     int a = ctl.act[i], waiting = ctl.capture == a;
-    const char *kn = waiting ? "누르세요" : keymap[cur->sys][a] ? SDL_GetScancodeName(keymap[cur->sys][a]) : "없음";
+    const char *kn = waiting ? "누르세요" : keymap[cur->sys][a] ? key_name(keymap[cur->sys][a]) : "없음";
     float kw = fmaxf(64 * S, text_w(kn, 13, 1) + 24 * S), kh = rh - 12 * S, kx = x + cw - 8 * S - kw, ky = y + 6 * S;
     SDL_Color soft = rgba(237, 232, 255, 255);
     if (waiting) rrect(kx, ky, kw, kh, kh / 2, PINK, SKY, 3); else rrect(kx, ky, kw, kh, kh / 2, soft, soft, 0);
@@ -1443,6 +1489,12 @@ static int script_step(int *quit) {
     SDL_Event e = {0}; e.type = SDL_KEYDOWN; e.key.keysym.scancode = sc; e.key.keysym.sym = SDL_GetKeyFromScancode(sc);
     if (down) SDL_PushEvent(&e);
     if (up) { e.type = SDL_KEYUP; SDL_PushEvent(&e); }
+  } else if (!strcmp(cmd, "rclick")) {   // 오른쪽 클릭(제자리)
+    SDL_Event e = {0}; e.type = SDL_MOUSEBUTTONDOWN; e.button.button = SDL_BUTTON_RIGHT; SDL_PushEvent(&e);
+    e.type = SDL_MOUSEBUTTONUP; SDL_PushEvent(&e);
+  } else if (!strncmp(cmd, "mmove:", 6)) {   // 마우스 움직임 mmove:dx:dy
+    int dx = 0, dy = 0; sscanf(cmd + 6, "%d:%d", &dx, &dy);
+    SDL_Event e = {0}; e.type = SDL_MOUSEMOTION; e.motion.xrel = dx; e.motion.yrel = dy; SDL_PushEvent(&e);
   } else if (!strncmp(cmd, "click:", 6)) {   // 논리 좌표(배율 전)
     float x, y; sscanf(cmd + 6, "%f:%f", &x, &y);
     SDL_Event e = {0}; e.type = SDL_MOUSEBUTTONDOWN; e.button.button = SDL_BUTTON_LEFT; e.button.x = (int)x; e.button.y = (int)y;
@@ -1531,14 +1583,28 @@ int main(int argc, char **argv) {
       case SDL_DROPFILE: { char *p = e.drop.file; add_files(&p, 1); SDL_free(p); break; }
       case SDL_MOUSEMOTION:
         mouse_x = e.motion.x * mscale; mouse_y = e.motion.y * mscale;
+        if (screen == PLAY && !panel.open && !pmenu.open && !ctl.open && !confirm.open) { mouse_dx += e.motion.xrel; mouse_dy += e.motion.yrel; }
+        if (ctl.open && ctl.capture >= 0) {   // 조작법: 한쪽으로 확실히 움직이면 그 방향을 배정
+          cap_dx += e.motion.xrel; cap_dy += e.motion.yrel;
+          if (fmax(fabs(cap_dx), fabs(cap_dy)) > 80)
+            ctl_key((SDL_Scancode)(fabs(cap_dx) > fabs(cap_dy) ? (cap_dx > 0 ? MOUSE_UP + 3 : MOUSE_UP + 2) : (cap_dy > 0 ? MOUSE_UP + 1 : MOUSE_UP)));
+        } else cap_dx = cap_dy = 0;
         if (screen == PLAY && cur && SYS[cur->sys].touch && (e.motion.state & SDL_BUTTON_LMASK) && !panel.open && !pmenu.open && !ctl.open && game_rect.w > 0)
           touch_at(mouse_x, mouse_y, 1);
         break;
-      case SDL_MOUSEBUTTONUP:
+      case SDL_MOUSEBUTTONUP: {
+        int act = screen == PLAY ? key_action((SDL_Scancode)mouse_code(e.button.button)) : -1;
+        if (act >= 0) { press_action(act, 0); break; }
         if (e.button.button == SDL_BUTTON_LEFT && screen == PLAY) rh_set_pointer(0, 0, 0);
         break;
+      }
       case SDL_MOUSEBUTTONDOWN:
         mouse_x = e.button.x * mscale; mouse_y = e.button.y * mscale;
+        if (ctl.open && ctl.capture >= 0 && mouse_code(e.button.button)) { ctl_key((SDL_Scancode)mouse_code(e.button.button)); break; }   // 조작법: 클릭 배정
+        if (screen == PLAY && !panel.open && !pmenu.open && !ctl.open && !confirm.open) {   // 배정된 마우스 버튼
+          int act = key_action((SDL_Scancode)mouse_code(e.button.button));
+          if (act >= 0) { press_action(act, 1); break; }
+        }
         if (e.button.button == SDL_BUTTON_LEFT) mouse_click = 1;
         // DS 아래 화면: 게임 그림 위를 누르면 터치
         if (e.button.button == SDL_BUTTON_LEFT && screen == PLAY && cur && SYS[cur->sys].touch && !panel.open && !pmenu.open && !ctl.open && !confirm.open && game_rect.w > 0 &&
@@ -1599,9 +1665,8 @@ int main(int argc, char **argv) {
         if (down && (k == SDL_SCANCODE_F11 || (k == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT)))) { toggle_fullscreen(); break; }
         if (screen == PLAY && !panel.open && !pmenu.open && !ctl.open && !confirm.open) {
           int act = key_action(k);
-          if (act >= 20) { int lb = 1 << (act - 20); if (down) lstick_keys |= lb; else lstick_keys &= ~lb; break; }
-          if (act >= 16) { int rb = 1 << (act - 16); if (down) rstick_keys |= rb; else rstick_keys &= ~rb; break; }
-          if (act >= 0) { if (down) key_mask |= 1u << act; else key_mask &= ~(1u << act); }
+          if (act >= 16) { press_action(act, down); break; }
+          if (act >= 0) press_action(act, down);
           if (down && !e.key.repeat) {
             if (k == SDL_SCANCODE_ESCAPE) pmenu_open(1);
             if (k == SDL_SCANCODE_F1) do_save(quick_slot);
@@ -1640,6 +1705,11 @@ int main(int argc, char **argv) {
       }
     }
 
+    {   // 마우스 움직임을 배정했으면 게임 중엔 커서를 숨기고 창에 묶는다
+      static SDL_bool rel = SDL_FALSE;
+      SDL_bool want = (screen == PLAY && !panel.open && !pmenu.open && !ctl.open && !confirm.open && uses_mouse_move()) ? SDL_TRUE : SDL_FALSE;
+      if (want != rel) { SDL_SetRelativeMouseMode(want); rel = want; }
+    }
     if (screen == PLAY) run_frames();
 
     if (screen == LIB) {

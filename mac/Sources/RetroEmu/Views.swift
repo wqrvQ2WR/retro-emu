@@ -199,11 +199,56 @@ final class GameNSView: NSView {
     let (x, y): (Double, Double) = rotation == 1 ? (v, 1 - u) : rotation == 2 ? (1 - u, 1 - v) : rotation == 3 ? (1 - v, u) : (u, v)
     onPointer?(x, y, down && x >= 0 && x <= 1 && y >= 0 && y <= 1)
   }
-  override func mouseDown(with e: NSEvent) { pointer(e, true) }
-  override func mouseDragged(with e: NSEvent) { pointer(e, true) }
-  override func mouseUp(with e: NSEvent) { pointer(e, false) }
+  /// 배정된 마우스 버튼이면 true 를 돌려준다(그땐 DS 터치로 안 보냄)
+  var onMouseButton: ((UInt16, Bool) -> Bool)?
+  /// 마우스가 움직인 만큼(포인트, 아래·오른쪽이 +)
+  var onMouseMove: ((Double, Double) -> Void)?
+  private var leftTaken = false
+  override func mouseDown(with e: NSEvent) {
+    leftTaken = onMouseButton?(KeyMap.Mouse.left, true) ?? false
+    if !leftTaken { pointer(e, true) }
+  }
+  override func mouseDragged(with e: NSEvent) { onMouseMove?(e.deltaX, e.deltaY); if !leftTaken { pointer(e, true) } }
+  override func mouseUp(with e: NSEvent) { if leftTaken { _ = onMouseButton?(KeyMap.Mouse.left, false) } else { pointer(e, false) } }
+  override func rightMouseDown(with e: NSEvent) { _ = onMouseButton?(KeyMap.Mouse.right, true) }
+  override func rightMouseUp(with e: NSEvent) { _ = onMouseButton?(KeyMap.Mouse.right, false) }
+  override func rightMouseDragged(with e: NSEvent) { onMouseMove?(e.deltaX, e.deltaY) }
+  override func otherMouseDown(with e: NSEvent) { _ = onMouseButton?(KeyMap.Mouse.middle, true) }
+  override func otherMouseUp(with e: NSEvent) { _ = onMouseButton?(KeyMap.Mouse.middle, false) }
+  override func otherMouseDragged(with e: NSEvent) { onMouseMove?(e.deltaX, e.deltaY) }
+  override func mouseMoved(with e: NSEvent) { onMouseMove?(e.deltaX, e.deltaY) }
+
+  /// 마우스 움직임을 배정했으면 게임 중엔 커서를 숨기고 제자리에 묶는다(창이 앞에 있을 때만)
+  var wantCapture = false { didSet { applyCapture() } }
+  private var captured = false
+  private var observers: [NSObjectProtocol] = []
+  func applyCapture() {
+    let on = wantCapture && NSApp.isActive && window?.isKeyWindow == true
+    guard on != captured else { return }
+    captured = on
+    if on, let w = window, let sc = w.screen {
+      // 커서를 게임 화면 가운데로 옮겨 두고 묶는다(클릭이 이 창으로 오게)
+      let c = w.convertPoint(toScreen: convert(CGPoint(x: bounds.midX, y: bounds.midY), to: nil))
+      CGWarpMouseCursorPosition(CGPoint(x: c.x, y: sc.frame.maxY - c.y))
+    }
+    CGAssociateMouseAndMouseCursorPosition(on ? 0 : 1)
+    if on { NSCursor.hide() } else { NSCursor.unhide() }
+  }
+  override func viewWillMove(toWindow w: NSWindow?) {
+    if w == nil { wantCapture = false; observers.forEach(NotificationCenter.default.removeObserver); observers = [] }
+    super.viewWillMove(toWindow: w)
+  }
   override var acceptsFirstResponder: Bool { true }
-  override func viewDidMoveToWindow() { window?.makeFirstResponder(self) }
+  override func viewDidMoveToWindow() {
+    window?.makeFirstResponder(self)
+    window?.acceptsMouseMovedEvents = true
+    guard window != nil, observers.isEmpty else { return }
+    let nc = NotificationCenter.default
+    for n in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+              NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+      observers.append(nc.addObserver(forName: n, object: nil, queue: .main) { [weak self] _ in self?.applyCapture() })
+    }
+  }
   override func keyDown(with e: NSEvent) { if !e.isARepeat { onKey?(e.keyCode, true) } }
   override func keyUp(with e: NSEvent) { onKey?(e.keyCode, false) }
   override func flagsChanged(with e: NSEvent) {}
@@ -214,6 +259,8 @@ struct GameSurface: NSViewRepresentable {
   /// 저장 목록이 열려 있으면 게임 키를 안 보낸다
   let panelOpen: Bool
   var rotation = 0
+  /// 마우스 움직임을 배정했으면 게임 중 커서를 잡는다
+  var mouseLook = false
   let onSpecial: (UInt16) -> Void
 
   func makeNSView(context: Context) -> GameNSView {
@@ -225,9 +272,10 @@ struct GameSurface: NSViewRepresentable {
     v.screen.contentsGravity = .resize
     v.layer?.addSublayer(v.screen)
     v.onPointer = { x, y, down in emu.setPointer(x, y, down && !context.coordinator.panelOpen) }
-    v.onKey = { code, down in
-      if let a = emu.keyLookup[code], !KeyMap.reserved.contains(code), !context.coordinator.panelOpen {
-        if a >= 20 {
+    /// 배정된 키·마우스 버튼이면 게임 입력으로 보내고 true
+    func press(_ code: UInt16, _ down: Bool) -> Bool {
+      guard let a = emu.keyLookup[code], !KeyMap.reserved.contains(code), !context.coordinator.panelOpen else { return false }
+      if a >= 20 {
           let r = UInt32(1) << UInt32(a - 20)
           if down { emu.leftKeys |= r } else { emu.leftKeys &= ~r }
         } else if a >= 16 {
@@ -237,14 +285,18 @@ struct GameSurface: NSViewRepresentable {
           let b = UInt32(1) << UInt32(a)
           if down { emu.keyMask |= b } else { emu.keyMask &= ~b }
         }
-      } else if down { onSpecial(code) }
+      return true
     }
+    v.onKey = { code, down in if !press(code, down) && down { onSpecial(code) } }
+    v.onMouseButton = { code, down in press(code, down) }
+    v.onMouseMove = { dx, dy in if !context.coordinator.panelOpen { emu.addMouse(dx, dy) } }
     emu.onFrame = { [weak v] img, a in v?.show(img, aspect: a) }
     return v
   }
   func updateNSView(_ v: GameNSView, context: Context) {
     context.coordinator.panelOpen = panelOpen
     v.rotation = rotation
+    v.wantCapture = mouseLook && !panelOpen
     // 목록의 버튼을 누르면 키 입력을 뺏길 수 있어서 다시 가져온다
     DispatchQueue.main.async { if v.window?.firstResponder !== v { v.window?.makeFirstResponder(v) } }
   }
@@ -269,6 +321,10 @@ struct PlayView: View {
   @State private var controls = false
   @State private var ctlSel = 0
   @State private var capture: Int?
+  /// 마우스 움직임 배정이 있음(게임 중 커서 잡기)
+  @State private var mouseLook = false
+  /// 조작법에서 마우스를 받는 감시자
+  @State private var mcap = MouseCapture()
   @State private var keymap: [Int: UInt16] = [:]
   @State private var ctlRows: [(Int, String)] = []
   @State private var slots: [SaveSlot] = []
@@ -280,7 +336,7 @@ struct PlayView: View {
   var body: some View {
     ZStack(alignment: .top) {
       Color.black.ignoresSafeArea()
-      GameSurface(emu: emu, panelOpen: panel || menu || controls, rotation: rotation) { code in
+      GameSurface(emu: emu, panelOpen: panel || menu || controls, rotation: rotation, mouseLook: mouseLook) { code in
         if controls { controlsKey(code); return }
         if menu {
           switch code {
@@ -345,7 +401,11 @@ struct PlayView: View {
       }
     }
     .overlay { if syncing { syncOverlay } }
-    .onDisappear { emu.stop() }
+    .onDisappear { emu.stop(); mcap.stop() }
+    .onChange(of: capture) { c in
+      // 조작법에서 줄을 고르면 마우스 클릭·움직임도 받는다
+      if c != nil { mcap.start { code in controlsKey(code) } } else { mcap.stop() }
+    }
   }
 
   var syncOverlay: some View {
@@ -356,6 +416,7 @@ struct PlayView: View {
   }
 
   func begin() {
+      mouseLook = KeyMap.load(game.system).values.contains(where: KeyMap.isMouseMove)
       if let err = emu.start(rom: game.path, system: game.system) {
         model.playing = nil
         model.error = err
@@ -405,6 +466,7 @@ struct PlayView: View {
   }
 
   func applyKeys(_ m: [Int: UInt16]) {
+    mouseLook = m.values.contains(where: KeyMap.isMouseMove)
     keymap = m
     emu.keyLookup = KeyMap.lookup(m)
     emu.keyMask = 0; emu.rightKeys = 0; emu.leftKeys = 0
@@ -442,6 +504,32 @@ struct PlayView: View {
       if g == toastGen { withAnimation { toast = nil } }
     }
   }
+}
+
+/// 조작법에서 새 입력을 기다리는 동안 마우스 클릭과 움직임을 잡는다
+final class MouseCapture {
+  private var mon: Any?
+  private var dx = 0.0, dy = 0.0
+  func start(_ got: @escaping (UInt16) -> Void) {
+    stop()
+    dx = 0; dy = 0
+    mon = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .mouseMoved, .leftMouseDragged]) { [weak self] e in
+      guard let self else { return e }
+      switch e.type {
+      case .leftMouseDown: self.stop(); got(KeyMap.Mouse.left); return nil
+      case .rightMouseDown: self.stop(); got(KeyMap.Mouse.right); return nil
+      case .otherMouseDown: self.stop(); got(KeyMap.Mouse.middle); return nil
+      default:
+        self.dx += e.deltaX; self.dy += e.deltaY
+        // 한쪽으로 확실히 움직였을 때만(손 떨림은 무시)
+        guard max(abs(self.dx), abs(self.dy)) > 80 else { return e }
+        let code = abs(self.dx) > abs(self.dy) ? (self.dx > 0 ? KeyMap.Mouse.moveRight : KeyMap.Mouse.moveLeft)
+                                                 : (self.dy > 0 ? KeyMap.Mouse.down : KeyMap.Mouse.up)
+        self.stop(); got(code); return e
+      }
+    }
+  }
+  func stop() { if let m = mon { NSEvent.removeMonitor(m); mon = nil } }
 }
 
 // MARK: - 일시정지 메뉴

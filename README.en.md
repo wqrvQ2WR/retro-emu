@@ -74,6 +74,7 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 - Click a row (or pick it with the arrow keys and press Enter), then press the new key. If another button was using that key, that button is cleared. Esc cancels.
 - Key bindings are saved **per system**, and **기본값으로** (Reset) restores the defaults.
 - Esc, F1, F2 and F3 (plus F11 on Windows) are reserved for menus and can't be bound to game buttons.
+- **The mouse can be bound too.** After picking a row, click (left/right/middle) or move the mouse clearly up/down/left/right instead of pressing a key. Mouse movement bound to a stick (e.g. N64 C buttons, a right stick) tilts it more the faster you move, which works well for camera control. With any mouse movement bound, the cursor is hidden and locked to the window during play and released when the Esc menu opens. Each row holds one input, so binding the mouse replaces that row's key.
 
 ### Rotate screen
 
