@@ -84,6 +84,10 @@ final class ControlsView: UIView {
   var onMask: ((UInt32) -> Void)?
   /// 아날로그 기종이면 왼쪽 패드를 아날로그 스틱으로(-1~1)
   var onStick: ((CGPoint) -> Void)?
+  /// N64 C 버튼 -> 오른쪽 스틱
+  var onRStick: ((CGPoint) -> Void)?
+  /// C 버튼은 비트 24~27(위·아래·왼쪽·오른쪽)로 들고 있다가 오른쪽 스틱으로 바꾼다
+  static let cBase = 24
 
   private var buttons: [Button] = []
   private var padCenter = CGPoint.zero
@@ -115,7 +119,19 @@ final class ControlsView: UIView {
 
     // 어깨 버튼(맨 위 양 끝)
     let sh = 38 * u, sw = 88 * u * min(k, 1.12), top = 8 * u
-    if system.hasShoulders {
+    if system == .n64 || system == .gc {
+      // 버튼 이름은 코어가 알려 주는 대로. N64: L2=Z, L, R(R2 는 C 버튼 모드라 뺌). 게임큐브: L2=L, R=Z, R2=R(L 은 Triforce 시험용이라 뺌)
+      let left: [(Int, String)] = system == .n64 ? [(RH_L2, "Z"), (RH_L, "L")] : [(RH_L2, "L")]
+      let right: [(Int, String)] = system == .n64 ? [(RH_R, "R")] : [(RH_R2, "R"), (RH_R, "Z")]
+      for (i, (bit, l)) in left.enumerated() {
+        let w = i == 0 ? sw : sw * 0.75, x = i == 0 ? 12 * u : 20 * u + sw
+        buttons.append(Button(bit: bit, label: l, rect: CGRect(x: x, y: top, width: w, height: sh), round: false))
+      }
+      for (i, (bit, l)) in right.enumerated() {
+        let w = i == 0 ? sw : sw * 0.75, x = i == 0 ? W - 12 * u - sw : W - 20 * u - sw * 1.75
+        buttons.append(Button(bit: bit, label: l, rect: CGRect(x: x, y: top, width: w, height: sh), round: false))
+      }
+    } else if system.hasShoulders {
       buttons.append(Button(bit: RH_L, label: "L", rect: CGRect(x: 12 * u, y: top, width: sw, height: sh), round: false))
       buttons.append(Button(bit: RH_R, label: "R", rect: CGRect(x: W - 12 * u - sw, y: top, width: sw, height: sh), round: false))
       if system.hasTriggers {
@@ -130,7 +146,17 @@ final class ControlsView: UIView {
     let side = max(padRadius + 16 * u, W * (overlay ? 0.12 : 0.25))
     padCenter = CGPoint(x: side, y: midY)
     let face = CGPoint(x: W - side, y: midY)
-    if system.hasXY {
+    if system == .n64 {
+      // N64 코어: 패드 B=A, Y=B. 노란 C 버튼 넷은 오른쪽 스틱으로.
+      let r = min(30 * u * k, padRadius * 0.44)
+      buttons.append(Button(bit: RH_B, label: "A", rect: CGRect(x: face.x - r * 0.3 - r, y: face.y + r * 1.0 - r, width: r * 2, height: r * 2), round: true))
+      buttons.append(Button(bit: RH_Y, label: "B", rect: CGRect(x: face.x - r * 1.9 - r * 0.85, y: face.y - r * 0.2 - r * 0.85, width: r * 1.7, height: r * 1.7), round: true))
+      let cr = r * 0.6, cc = CGPoint(x: face.x + r * 1.1, y: face.y - r * 1.1), cd = cr * 1.55
+      for (i, (dx, dy)) in [(0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)].enumerated() {
+        buttons.append(Button(bit: ControlsView.cBase + i, label: "@c\(i)",
+                              rect: CGRect(x: cc.x + CGFloat(dx) * cd - cr, y: cc.y + CGFloat(dy) * cd - cr, width: cr * 2, height: cr * 2), round: true))
+      }
+    } else if system.hasXY {
       let r = min(29 * u * k, padRadius * 0.42), d = r * 1.72
       let ps1 = system == .ps1 || system == .ps2 || system == .psp
       let set: [(Int, String, CGFloat, CGFloat)] = [
@@ -152,8 +178,16 @@ final class ControlsView: UIView {
     // 가로 화면에선 게임 화면을 안 가리게 십자키·A/B 아래로
     let selX = overlay ? padCenter.x - pw / 2 : W / 2 - pw - 8 * u
     let staX = overlay ? face.x - pw / 2 : W / 2 + 8 * u
-    buttons.append(Button(bit: RH_SELECT, label: "셀렉트", rect: CGRect(x: selX, y: py, width: pw, height: ph), round: false))
-    buttons.append(Button(bit: RH_START, label: "스타트", rect: CGRect(x: staX, y: py, width: pw, height: ph), round: false))
+    // N64·게임큐브엔 셀렉트가 없다(돌핀은 그 자리가 Triforce 코인)
+    let noSelect = system == .n64 || system == .gc
+    if !noSelect { buttons.append(Button(bit: RH_SELECT, label: "셀렉트", rect: CGRect(x: selX, y: py, width: pw, height: ph), round: false)) }
+    let stX = noSelect && !overlay ? W / 2 - pw / 2 : staX
+    buttons.append(Button(bit: RH_START, label: "스타트", rect: CGRect(x: stX, y: py, width: pw, height: ph), round: false))
+    if system == .nds {
+      // DS 마이크: melonDS 의 "Make microphone noise"(패드 L2). 누르고 있는 동안 소리가 들어간다.
+      let m = ph * 1.2, mx = overlay ? staX + pw + 10 * u : staX + pw + 12 * u
+      buttons.append(Button(bit: RH_L2, label: "@mic", rect: CGRect(x: mx, y: py + ph / 2 - m / 2, width: m, height: m), round: true))
+    }
     setNeedsDisplay()
   }
 
@@ -196,7 +230,9 @@ final class ControlsView: UIView {
     if m != held {
       if m & ~held != 0 { haptic.impactOccurred(intensity: 0.6) }
       held = m
-      onMask?(m)
+      onMask?(m & 0xFFFF)
+      let c = Int(m >> UInt32(ControlsView.cBase)) & 0xF
+      onRStick?(CGPoint(x: (c & 8 != 0 ? 1 : 0) - (c & 4 != 0 ? 1 : 0), y: (c & 2 != 0 ? 1 : 0) - (c & 1 != 0 ? 1 : 0)))
       setNeedsDisplay()
     } else if stick || system.hasAnalog {
       setNeedsDisplay()  // 조이스틱 손잡이 위치
@@ -261,10 +297,38 @@ final class ControlsView: UIView {
       let path = b.round ? UIBezierPath(ovalIn: b.rect) : UIBezierPath(roundedRect: b.rect, cornerRadius: b.rect.height / 2)
       fill(path, pressed(b.bit))
       if b.label.hasPrefix("@ps") { psShape(b.label, in: b.rect, on: pressed(b.bit), dim: dim); continue }
+      if b.label.hasPrefix("@c") { cArrow(Int(b.label.dropFirst(2)) ?? 0, in: b.rect, on: pressed(b.bit), dim: dim); continue }
+      if b.label == "@mic" { micIcon(in: b.rect, dim: dim); continue }
       let size = b.round ? b.rect.height * (b.label.count > 1 ? 0.26 : 0.36) : b.rect.height * 0.42
       label(b.label, in: b.rect, size: size)
     }
   }
+}
+
+/// N64 C 버튼: 노란 삼각형 화살표(0 위, 1 아래, 2 왼쪽, 3 오른쪽)
+private func cArrow(_ dir: Int, in r: CGRect, on: Bool, dim: CGFloat) {
+  let w = r.width * 0.4, c = CGPoint(x: r.midX, y: r.midY)
+  let pts: [CGPoint] = [CGPoint(x: 0, y: -0.5), CGPoint(x: 0.5, y: 0.4), CGPoint(x: -0.5, y: 0.4)]
+  let ang: CGFloat = [0, .pi, -.pi / 2, .pi / 2][dir]
+  let p = UIBezierPath()
+  for (i, q) in pts.enumerated() {
+    let x = q.x * cos(ang) - q.y * sin(ang), y = q.x * sin(ang) + q.y * cos(ang)
+    let pt = CGPoint(x: c.x + x * w, y: c.y + y * w)
+    if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+  }
+  p.close()
+  (on ? UIColor.white : UIColor(red: 1, green: 0.83, blue: 0.23, alpha: 1)).withAlphaComponent(dim).setFill()
+  p.fill()
+}
+
+/// 마이크 그림
+private func micIcon(in r: CGRect, dim: CGFloat) {
+  let w = r.width * 0.5, x0 = r.midX - w / 2, y0 = r.midY - w / 2
+  UIColor.white.withAlphaComponent(0.95 * dim).set()
+  UIBezierPath(roundedRect: CGRect(x: x0 + w * 0.34, y: y0 + w * 0.06, width: w * 0.32, height: w * 0.52), cornerRadius: w * 0.16).fill()
+  let arc = UIBezierPath(arcCenter: CGPoint(x: r.midX, y: y0 + w * 0.46), radius: w * 0.3, startAngle: 0, endAngle: .pi, clockwise: true)
+  arc.move(to: CGPoint(x: r.midX, y: y0 + w * 0.76)); arc.addLine(to: CGPoint(x: r.midX, y: y0 + w * 0.94))
+  arc.lineWidth = w * 0.1; arc.lineCapStyle = .round; arc.stroke()
 }
 
 /// 플레이스테이션 버튼 모양(글자 대신 그림). 평소엔 원래 색, 누르면 흰색.
@@ -309,6 +373,7 @@ struct ControlsRep: UIViewRepresentable {
     let v = ControlsView()
     v.onMask = { emu.touchMask = $0 }
     v.onStick = { emu.touchStick = $0 }
+    v.onRStick = { emu.touchRStick = $0 }
     return v
   }
   func updateUIView(_ v: ControlsView, context: Context) {

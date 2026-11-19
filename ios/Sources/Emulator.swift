@@ -28,6 +28,8 @@ final class Emulator {
   var touchMask: UInt32 = 0
   /// 터치 스틱(아날로그 기종) 값: -1~1, 아래·오른쪽이 +
   var touchStick = CGPoint.zero
+  /// 터치 C 버튼(N64)이 보내는 오른쪽 스틱
+  var touchRStick = CGPoint.zero
   private var system: GameSystem = .nes
   /// 새 영상이 나오면 호출(메인 스레드)
   var onFrame: ((CGImage, Double) -> Void)?
@@ -210,11 +212,11 @@ final class Emulator {
     menuHeld = menu
     if panelPaused || bgPaused { return }
     // 아날로그: 터치 스틱, 게임패드 스틱 중 더 기운 쪽
-    var lx = Double(touchStick.x), ly = Double(touchStick.y), rx = 0.0, ry = 0.0
+    var lx = Double(touchStick.x), ly = Double(touchStick.y), rx = Double(touchRStick.x), ry = Double(touchRStick.y)
     if let gp = GCController.controllers().first?.extendedGamepad {
       let l = gp.leftThumbstick, r = gp.rightThumbstick
       if abs(Double(l.xAxis.value)) + abs(Double(l.yAxis.value)) > abs(lx) + abs(ly) { lx = Double(l.xAxis.value); ly = -Double(l.yAxis.value) }
-      rx = Double(r.xAxis.value); ry = -Double(r.yAxis.value)
+      if abs(Double(r.xAxis.value)) + abs(Double(r.yAxis.value)) > abs(rx) + abs(ry) { rx = Double(r.xAxis.value); ry = -Double(r.yAxis.value) }
     }
     rh_set_analog(0, lx, ly)
     rh_set_analog(1, rx, ry)

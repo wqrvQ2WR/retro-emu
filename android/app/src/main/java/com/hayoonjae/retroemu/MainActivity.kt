@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -386,7 +387,7 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
                 Box(Modifier.width((190 * k).dp).fillMaxHeight(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Shoulders(engine, sys, false, k); Spacer(Modifier.height(10.dp)); Face(engine, sys, k)
-                        Spacer(Modifier.height(10.dp)); StartSelect(engine, k)
+                        Spacer(Modifier.height(10.dp)); StartSelect(engine, sys, k)
                     }
                 }
             }
@@ -401,7 +402,7 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
                     verticalAlignment = Alignment.CenterVertically) {
                     DirPad(engine, sys, k, prefs.stick); Face(engine, sys, k)
                 }
-                StartSelect(engine, k)
+                StartSelect(engine, sys, k)
                 Spacer(Modifier.height(28.dp))
             }
         }
@@ -573,6 +574,7 @@ fun HoldButton(engine: Engine, bit: Int, label: String, size: Float = 56f, shape
             }
         }, contentAlignment = Alignment.Center) {
         if (label.startsWith("@ps")) PsShape(label, down, size * 0.44f)
+        else if (label == MIC_ICON) MicIcon(down, size * 0.5f)
         else Text(label, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = (size / 3.2f).sp)
     }
 }
@@ -703,7 +705,12 @@ fun Joystick(engine: Engine, k: Float, analog: Boolean = false) {
 @Composable
 fun Face(engine: Engine, sys: GameSystem, k: Float) {
     Box(Modifier.size(dp(150 * k))) {
-        if (sys.hasXY) {
+        if (sys == GameSystem.N64) {
+            // N64 코어(mupen64plus): 패드 B=A, Y=B. 노란 C 버튼 넷은 오른쪽 스틱으로 보낸다.
+            Box(Modifier.align(Alignment.BottomStart).offset(x = dp(30 * k))) { HoldButton(engine, Pad.B, "A", 56 * k) }
+            Box(Modifier.align(Alignment.CenterStart).offset(y = dp(-6 * k))) { HoldButton(engine, Pad.Y, "B", 46 * k) }
+            CButtons(engine, k, Modifier.align(Alignment.TopEnd))
+        } else if (sys.hasXY) {
             val b = 52 * k
             Box(Modifier.align(Alignment.TopCenter)) { HoldButton(engine, Pad.X, sys.label(Pad.X) ?: "X", b) }
             Box(Modifier.align(Alignment.CenterStart)) { HoldButton(engine, Pad.Y, sys.label(Pad.Y) ?: "Y", b) }
@@ -721,6 +728,17 @@ fun Shoulders(engine: Engine, sys: GameSystem, left: Boolean, k: Float) {
     if (!sys.hasShoulders) { Spacer(Modifier.height(1.dp)); return }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val r = RoundedCornerShape(dp(14 * k)); val f = 40 * k; val w = 64 * k; val h = 40 * k
+        // 버튼 이름은 코어가 알려 주는 대로(N64: L2=Z Trigger, R2=C 버튼 모드라 뺌 / 게임큐브: L=Triforce 시험용이라 뺌, R=Z, L2=L, R2=R)
+        if (sys == GameSystem.N64) {
+            if (left) { HoldButton(engine, Pad.L2, "Z", f, r, w, h); HoldButton(engine, Pad.L, "L", f, r, w, h) }
+            else HoldButton(engine, Pad.R, "R", f, r, w, h)
+            return@Row
+        }
+        if (sys == GameSystem.GC) {
+            if (left) HoldButton(engine, Pad.L2, "L", f, r, w, h)
+            else { HoldButton(engine, Pad.R, "Z", f, r, w, h); HoldButton(engine, Pad.R2, "R", f, r, w, h) }
+            return@Row
+        }
         if (left) {
             if (sys.hasTriggers) HoldButton(engine, Pad.L2, "L2", f, r, w, h)
             HoldButton(engine, Pad.L, "L", f, r, w, h)
@@ -732,11 +750,68 @@ fun Shoulders(engine: Engine, sys: GameSystem, left: Boolean, k: Float) {
 }
 
 @Composable
-fun StartSelect(engine: Engine, k: Float) {
-    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+fun StartSelect(engine: Engine, sys: GameSystem, k: Float) {
+    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
         val h = 34 * k; val r = RoundedCornerShape(dp(h / 2)); val w = 84 * k
-        HoldButton(engine, Pad.SELECT, "셀렉트", h, r, w, h)
+        // N64·게임큐브엔 셀렉트가 없다(돌핀은 그 자리가 Triforce 코인)
+        if (sys != GameSystem.N64 && sys != GameSystem.GC) HoldButton(engine, Pad.SELECT, "셀렉트", h, r, w, h)
         HoldButton(engine, Pad.START, "스타트", h, r, w, h)
+        // DS 마이크: melonDS 의 "Make microphone noise"(패드 L2). 누르고 있는 동안 마이크에 소리가 들어간다(불기·외치기).
+        if (sys == GameSystem.NDS) HoldButton(engine, Pad.L2, MIC_ICON, h + 6 * k)
+    }
+}
+
+const val MIC_ICON = "@mic"
+
+/** 마이크 그림(글자 대신) */
+@Composable
+fun MicIcon(pressed: Boolean, sizeDp: Float) {
+    val c = Color.White
+    Canvas(Modifier.size(dp(sizeDp))) {
+        val w = size.width; val sw = w * 0.1f
+        val st = androidx.compose.ui.graphics.drawscope.Stroke(width = sw, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        // 몸통(둥근 막대)
+        drawRoundRect(c, Offset(w * 0.34f, w * 0.06f), androidx.compose.ui.geometry.Size(w * 0.32f, w * 0.52f),
+            androidx.compose.ui.geometry.CornerRadius(w * 0.16f))
+        // 받침 고리
+        drawArc(c, 0f, 180f, false, Offset(w * 0.2f, w * 0.18f), androidx.compose.ui.geometry.Size(w * 0.6f, w * 0.56f), style = st)
+        drawLine(c, Offset(w / 2, w * 0.74f), Offset(w / 2, w * 0.92f), sw, androidx.compose.ui.graphics.StrokeCap.Round)
+        if (pressed) drawCircle(Color.White.copy(alpha = 0.25f), radius = w * 0.5f)
+    }
+}
+
+/** N64 C 버튼 넷(노란 삼각형 화살표). 누른 방향을 오른쪽 스틱으로 보낸다(코어가 오른쪽 스틱을 C 버튼으로 읽음). */
+@Composable
+fun CButtons(engine: Engine, k: Float, modifier: Modifier) {
+    var held by remember { mutableStateOf(0) }   // 1=위 2=아래 4=왼쪽 8=오른쪽
+    fun send(m: Int) {
+        held = m
+        val x = (if (m and 8 != 0) 1f else 0f) - (if (m and 4 != 0) 1f else 0f)
+        val y = (if (m and 2 != 0) 1f else 0f) - (if (m and 1 != 0) 1f else 0f)
+        engine.setAnalog(1, x, y)
+    }
+    val haptic = LocalHapticFeedback.current
+    val b = 34 * k
+    Box(modifier.size(dp(b * 2.6f))) {
+        listOf(Triple(1, Alignment.TopCenter, 0f), Triple(2, Alignment.BottomCenter, 180f),
+               Triple(4, Alignment.CenterStart, 270f), Triple(8, Alignment.CenterEnd, 90f)).forEach { (bit, al, rot) ->
+            val on = held and bit != 0
+            Box(Modifier.align(al).size(dp(b)).clip(CircleShape)
+                .background(if (on) Brush.linearGradient(listOf(Pink, Violet)) else Brush.linearGradient(listOf(Color(0x66FFFFFF), Color(0x33FFFFFF))))
+                .pointerInput(bit) {
+                    awaitEachGesture {
+                        awaitFirstDown(); send(held or bit); haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        do { val e = awaitPointerEvent() } while (e.changes.any { it.pressed })
+                        send(held and bit.inv())
+                    }
+                }, contentAlignment = Alignment.Center) {
+                Canvas(Modifier.size(dp(b * 0.42f))) {
+                    val w = size.width
+                    val path = androidx.compose.ui.graphics.Path().apply { moveTo(w / 2, w * 0.12f); lineTo(w * 0.92f, w * 0.85f); lineTo(w * 0.08f, w * 0.85f); close() }
+                    this.rotate(rot) { drawPath(path, if (on) Color.White else Color(0xFFFFD43B)) }
+                }
+            }
+        }
     }
 }
 
