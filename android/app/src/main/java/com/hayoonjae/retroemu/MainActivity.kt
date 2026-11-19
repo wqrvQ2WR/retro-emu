@@ -62,8 +62,12 @@ class MainActivity : ComponentActivity() {
         // 점검용: adb shell am start -n ... --es sync_code X --es sync_server http://127.0.0.1:8270/retro-sync
         intent?.getStringExtra("sync_code")?.let { Sync.setCode(this, it) }
         intent?.getStringExtra("sync_server")?.let { Sync.setServer(this, it.takeIf { s -> s != "default" }) }
+        if (savedInstanceState == null) Shortcuts.take(intent)   // 홈 화면 바로가기로 켜짐
         setContent { MaterialTheme(colorScheme = lightColorScheme(primary = Violet)) { Root() } }
     }
+
+    // 앱이 떠 있을 때 바로가기를 누르면 여기로 온다
+    override fun onNewIntent(intent: android.content.Intent) { super.onNewIntent(intent); Shortcuts.take(intent) }
 
     // 홈·잠금으로 뒤로 가면 멈추고 자동 저장(뒤에서 꺼져도 진행이 남게)
     override fun onStop() { super.onStop(); Gamepad.engine?.setBackground(true) }
@@ -97,6 +101,22 @@ fun Root() {
                 games = listGames(ctx)
             }
             importing = null
+        }
+    }
+
+    // 홈 화면 바로가기: 그 게임을 바로 켠다. 잠긴 게임은 안 켜고, 다른 게임 중이면 그대로 둔다.
+    val pendingRom = Shortcuts.pending
+    LaunchedEffect(pendingRom) {
+        val name = pendingRom ?: return@LaunchedEffect
+        Shortcuts.pending = null
+        val f = File(romsDir(ctx), name)
+        val locked = ctx.getSharedPreferences("locks", android.content.Context.MODE_PRIVATE).getStringSet("names", emptySet())!!
+        when {
+            playing?.name == name -> {}
+            playing != null -> android.widget.Toast.makeText(ctx, "지금 게임에서 나간 뒤에 바로가기를 눌러요", android.widget.Toast.LENGTH_SHORT).show()
+            !f.exists() -> android.widget.Toast.makeText(ctx, "목록에 없는 게임이에요", android.widget.Toast.LENGTH_SHORT).show()
+            name in locked -> android.widget.Toast.makeText(ctx, "잠긴 게임이에요 · 목록에서 길게 눌러 잠금을 풀어요", android.widget.Toast.LENGTH_LONG).show()
+            else -> playing = f
         }
     }
 
@@ -247,6 +267,15 @@ fun Library(games: List<File>, onPlay: (File) -> Unit, onAdd: () -> Unit, onDele
                         .combinedClickable(onClick = { actionFor = null; if (isLocked) unlockFor = f else setLocked(f, true) })
                         .padding(vertical = 13.dp), contentAlignment = Alignment.Center) {
                         Text(if (isLocked) "잠금 풀기" else "잠그기", fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                    if (Shortcuts.supported(ctx)) Box(Modifier.fillMaxWidth().clip(CircleShape).background(Color(0xFFEDE8FF))
+                        .combinedClickable(onClick = {
+                            actionFor = null
+                            if (!Shortcuts.pin(ctx, f, f.nameWithoutExtension.removeSuffix(".nkit")))
+                                android.widget.Toast.makeText(ctx, "이 홈 화면은 바로가기를 못 만들어요", android.widget.Toast.LENGTH_SHORT).show()
+                        })
+                        .padding(vertical = 13.dp), contentAlignment = Alignment.Center) {
+                        Text("홈 화면에 추가", fontWeight = FontWeight.Bold, color = Color(0xFF5C33BF))
                     }
                     Box(Modifier.fillMaxWidth().clip(CircleShape).background(Color(0xFFEDE8FF))
                         .combinedClickable(onClick = { actionFor = null; del = f })
