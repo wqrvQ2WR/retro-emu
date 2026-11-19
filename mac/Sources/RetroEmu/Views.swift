@@ -163,6 +163,9 @@ final class GameNSView: NSView {
   var onPointer: ((Double, Double, Bool) -> Void)?
   /// 화면 비율(가로/세로). 코어가 알려 준 값이라 그림 픽셀 크기와 다를 수 있다(N64 640x240 은 4:3).
   var aspect: Double = 4.0 / 3.0 { didSet { if abs(aspect - oldValue) > 0.001 { needsLayout = true } } }
+  /// 화면 돌리기(시계 방향 90도 단위). 옆으로 드는 DS 게임(러브플러스)용.
+  var rotation = 0 { didSet { if rotation != oldValue { needsLayout = true } } }
+  private var shownAspect: Double { rotation % 2 == 1 ? 1 / aspect : aspect }
   let screen = CALayer()
   func show(_ img: CGImage, aspect a: Double) {
     CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -173,19 +176,27 @@ final class GameNSView: NSView {
   /// 비율을 지켜 가운데 맞춘 그림 자리
   var screenRect: CGRect {
     let b = bounds.size
-    var w = b.width, h = w / aspect
-    if h > b.height { h = b.height; w = h * aspect }
+    let a = shownAspect
+    var w = b.width, h = w / a
+    if h > b.height { h = b.height; w = h * a }
     return CGRect(x: (b.width - w) / 2, y: (b.height - h) / 2, width: w, height: h)
   }
   override func layout() {
     super.layout()
     CATransaction.begin(); CATransaction.setDisableActions(true)
-    screen.frame = screenRect
+    let r = screenRect
+    // 돌리기 전 크기로 놓고 가운데를 축으로 돌린다(맥 레이어는 양수 각도가 반시계라서 음수)
+    screen.transform = CATransform3DIdentity
+    screen.bounds = CGRect(x: 0, y: 0, width: rotation % 2 == 1 ? r.height : r.width, height: rotation % 2 == 1 ? r.width : r.height)
+    screen.position = CGPoint(x: r.midX, y: r.midY)
+    screen.transform = CATransform3DMakeRotation(-CGFloat(rotation) * .pi / 2, 0, 0, 1)
     CATransaction.commit()
   }
   private func pointer(_ e: NSEvent, _ down: Bool) {
     let p = convert(e.locationInWindow, from: nil), r = screenRect
-    let x = (p.x - r.minX) / r.width, y = 1 - (p.y - r.minY) / r.height
+    let u = (p.x - r.minX) / r.width, v = 1 - (p.y - r.minY) / r.height
+    // 돌린 화면에서 누른 자리를 원래 그림 자리로
+    let (x, y): (Double, Double) = rotation == 1 ? (v, 1 - u) : rotation == 2 ? (1 - u, 1 - v) : rotation == 3 ? (1 - v, u) : (u, v)
     onPointer?(x, y, down && x >= 0 && x <= 1 && y >= 0 && y <= 1)
   }
   override func mouseDown(with e: NSEvent) { pointer(e, true) }
@@ -202,6 +213,7 @@ struct GameSurface: NSViewRepresentable {
   let emu: Emulator
   /// 저장 목록이 열려 있으면 게임 키를 안 보낸다
   let panelOpen: Bool
+  var rotation = 0
   let onSpecial: (UInt16) -> Void
 
   func makeNSView(context: Context) -> GameNSView {
@@ -229,6 +241,7 @@ struct GameSurface: NSViewRepresentable {
   }
   func updateNSView(_ v: GameNSView, context: Context) {
     context.coordinator.panelOpen = panelOpen
+    v.rotation = rotation
     // 목록의 버튼을 누르면 키 입력을 뺏길 수 있어서 다시 가져온다
     DispatchQueue.main.async { if v.window?.firstResponder !== v { v.window?.makeFirstResponder(v) } }
   }
@@ -246,6 +259,9 @@ struct PlayView: View {
   /// Esc 로 여는 일시정지 메뉴와 고른 줄
   @State private var menu = false
   @State private var menuSel = 0
+  /// 화면 돌리기(게임마다 기억)
+  @State private var rotation = 0
+  private var rotKey: String { "rotation." + (game.path as NSString).lastPathComponent }
   /// 조작법 화면
   @State private var controls = false
   @State private var ctlSel = 0
@@ -261,13 +277,13 @@ struct PlayView: View {
   var body: some View {
     ZStack(alignment: .top) {
       Color.black.ignoresSafeArea()
-      GameSurface(emu: emu, panelOpen: panel || menu || controls) { code in
+      GameSurface(emu: emu, panelOpen: panel || menu || controls, rotation: rotation) { code in
         if controls { controlsKey(code); return }
         if menu {
           switch code {
           case 53: setMenu(false)                                  // Esc: 이어하기
           case 126: menuSel = max(0, menuSel - 1)                  // 위
-          case 125: menuSel = min(PauseMenu.items.count - 1, menuSel + 1)  // 아래
+          case 125: menuSel = min(PauseMenu.count - 1, menuSel + 1)  // 아래
           case 36, 76, 49: pickMenu(menuSel)                       // Enter, 스페이스
           default: break
           }
@@ -282,7 +298,7 @@ struct PlayView: View {
         }
       }
       if menu {
-        PauseMenu(sel: $menuSel, onPick: pickMenu, onClose: { setMenu(false) })
+        PauseMenu(sel: $menuSel, rotation: rotation, onPick: pickMenu, onClose: { setMenu(false) })
           .transition(.opacity)
       }
       if controls {
@@ -309,6 +325,7 @@ struct PlayView: View {
       }
     }
     .onAppear {
+      rotation = UserDefaults.standard.integer(forKey: rotKey)
       emu.onToast = { show($0) }
       // 동기화를 켰으면 다른 기기 저장부터 받고 시작한다
       guard Sync.enabled else { return begin() }
@@ -364,6 +381,9 @@ struct PlayView: View {
     case 0: setMenu(false)
     case 1: menu = false; setPanel(true)
     case 2: openControls()
+    case 3:
+      rotation = (rotation + 1) % 4
+      UserDefaults.standard.set(rotation, forKey: rotKey)
     default: menu = false; quit()
     }
   }
@@ -424,8 +444,11 @@ struct PlayView: View {
 // MARK: - 일시정지 메뉴
 
 struct PauseMenu: View {
-  static let items = ["이어하기", "저장 / 불러오기", "조작법", "나가기"]
+  static let count = 5
+  static let rotNames = ["그대로", "오른쪽으로", "거꾸로", "왼쪽으로"]
   @Binding var sel: Int
+  var rotation = 0
+  var items: [String] { ["이어하기", "저장 / 불러오기", "조작법", "화면 돌리기: " + PauseMenu.rotNames[rotation], "나가기"] }
   let onPick: (Int) -> Void
   let onClose: () -> Void
 
@@ -439,7 +462,7 @@ struct PauseMenu: View {
           Text("Esc 이어하기").font(.system(size: 12, weight: .medium)).foregroundColor(.black.opacity(0.45))
         }
         .padding(.bottom, 4)
-        ForEach(Array(PauseMenu.items.enumerated()), id: \.offset) { i, t in
+        ForEach(Array(items.enumerated()), id: \.offset) { i, t in
           Button { onPick(i) } label: {
             Text(t).font(.system(size: 16, weight: .bold))
               .frame(maxWidth: .infinity).padding(.vertical, 13)

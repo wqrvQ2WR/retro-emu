@@ -562,8 +562,35 @@ static void panel_open(int open) {
 #define NACT_ROWS 20
 // Esc 일시정지 메뉴: 이어하기 / 저장·불러오기 / 조작법 / 나가기
 static struct { int open, sel; } pmenu;
-static const char *PMENU[] = {"이어하기", "저장 / 불러오기", "조작법", "나가기"};
-#define NPMENU 4
+static const char *PMENU[] = {"이어하기", "저장 / 불러오기", "조작법", "화면 돌리기", "나가기"};
+#define NPMENU 5
+// 화면 돌리기(시계 방향 90도 단위, 게임마다 data/rotation.txt 에 "회전 롬이름"). 옆으로 드는 DS 게임(러브플러스)용.
+static int rotation;
+static const char *ROTNAME[] = {"그대로", "오른쪽으로", "거꾸로", "왼쪽으로"};
+static void rot_path(char *out, size_t n) { snprintf(out, n, "%s/rotation.txt", data_dir); }
+static int rot_load(const char *rom) {
+  char p[2100]; rot_path(p, sizeof p);
+  size_t n; char *t = read_all(p, &n); if (!t) return 0;
+  t = realloc(t, n + 1); t[n] = 0;
+  int r = 0;
+  for (char *line = strtok(t, "\r\n"); line; line = strtok(NULL, "\r\n"))
+    if (line[0] >= '0' && line[0] <= '3' && line[1] == ' ' && !strcmp(line + 2, rom)) r = line[0] - '0';
+  free(t); return r;
+}
+static void rot_save(const char *rom, int r) {
+  char p[2100]; rot_path(p, sizeof p);
+  size_t n = 0; char *t = read_all(p, &n);
+  char *out = malloc(n + strlen(rom) + 8); size_t len = 0;
+  if (t) {   // 이 롬 줄만 빼고 그대로 옮긴다
+    t = realloc(t, n + 1); t[n] = 0;
+    for (char *line = strtok(t, "\r\n"); line; line = strtok(NULL, "\r\n"))
+      if (!(strlen(line) > 2 && !strcmp(line + 2, rom))) len += sprintf(out + len, "%s\n", line);
+    free(t);
+  }
+  if (r) len += sprintf(out + len, "%d %s\n", r, rom);
+  if (len) write_all(p, out, len); else remove_u8(p);
+  free(out);
+}
 // 조작법 화면: 줄마다 동작 번호와 이름(코어가 알려 준 이름 그대로)
 static struct { int open, sel, capture, n; int act[NACT_ROWS]; char name[NACT_ROWS][96]; } ctl;
 static void pmenu_open(int open) {
@@ -656,6 +683,13 @@ static const rh_gl_provider sdl_gl = {sdl_gl_create, sdl_gl_current, sdl_gl_proc
 static void draw_bg(void);
 static float text(const char *s, float x, float y, float size, int bold, SDL_Color c, int align);
 static SDL_Color rgba(int r, int g, int b, int a);
+/// 돌린 화면에서 누른 자리 -> 원래 그림 자리(0~1)
+static void touch_at(float mx, float my, int down) {
+  float u = (mx - game_rect.x) / game_rect.w, v = (my - game_rect.y) / game_rect.h, x = u, y = v;
+  if (rotation == 1) { x = v; y = 1 - u; } else if (rotation == 2) { x = 1 - u; y = 1 - v; } else if (rotation == 3) { x = 1 - v; y = u; }
+  rh_set_pointer(x, y, down);
+}
+
 static int start_game(Game *g) {
   char core[2300], rom[2300];
   int sync_failed = 0;
@@ -686,6 +720,7 @@ static int start_game(Game *g) {
   audio = SDL_OpenAudioDevice(NULL, 0, &want, &got, 0);
   if (audio) SDL_PauseAudioDevice(audio, 0);
   screen = PLAY;
+  rotation = rot_load(g->name);
   char st[2300]; slot_paths(0, st, NULL);
   if (exists_u8(st)) panel_open(1);   // 지난번 자동 저장이 있으면 목록부터
   else toast("Esc 메뉴 · F1 저장 · F2 불러오기 · F3 저장 목록");
@@ -968,6 +1003,7 @@ static void pmenu_pick(int i) {
   if (i == 0) pmenu_open(0);
   else if (i == 1) { pmenu.open = 0; panel_open(1); }   // 오디오는 저장 목록이 이어서 멈춰 둔다
   else if (i == 2) { pmenu.open = 0; ctl_open(); }
+  else if (i == 3) { rotation = (rotation + 1) % 4; rot_save(cur->name, rotation); }   // 메뉴는 열어 둔 채
   else { pmenu.open = 0; stop_game(); }
 }
 static void pmenu_nav(int n) {
@@ -1146,7 +1182,8 @@ static void draw_pmenu(void) {
   for (int i = 0; i < NPMENU; i++) {
     float by = y + 62 * S + i * (bh + gap), bx = x + 22 * S, bw = w - 44 * S;
     if (i == pmenu.sel) rrect(bx - 3 * S, by - 3 * S, bw + 6 * S, bh + 6 * S, bh / 2 + 3 * S, PINK, SKY, 3);
-    int over = btn(PMENU[i], bx, by, bw, bh, i == pmenu.sel, 1);
+    char lb[64]; if (i == 3) snprintf(lb, sizeof lb, "화면 돌리기: %s", ROTNAME[rotation]); else snprintf(lb, sizeof lb, "%s", PMENU[i]);
+    int over = btn(lb, bx, by, bw, bh, i == pmenu.sel, 1);
     if (over) pmenu.sel = i;
     if (over && mouse_click) { mouse_click = 0; pmenu_pick(i); return; }
   }
@@ -1344,10 +1381,14 @@ static void draw_game(void) {
   SDL_SetRenderDrawColor(ren, 0, 0, 0, 255); SDL_RenderClear(ren);
   if (game_tex) {
     double a = rh_aspect(); if (a <= 0) a = (double)game_w / game_h;
+    if (rotation & 1) a = 1 / a;   // 돌린 뒤 보이는 비율
     float w = W, h = W / a; if (h > H) { h = H; w = H * a; }
     SDL_FRect d = {(W - w) / 2, (H - h) / 2, w, h};
-    game_rect = d;
-    SDL_RenderCopyF(ren, game_tex, NULL, &d);
+    game_rect = d;   // 보이는 자리(돌린 뒤)
+    // 돌리기 전 크기로 놓고 가운데를 축으로 돌린다
+    float rw = (rotation & 1) ? h : w, rh = (rotation & 1) ? w : h;
+    SDL_FRect src = {(W - rw) / 2, (H - rh) / 2, rw, rh};
+    SDL_RenderCopyExF(ren, game_tex, NULL, &src, rotation * 90.0, NULL, SDL_FLIP_NONE);
   }
   if (panel.open) draw_panel();
   if (pmenu.open) draw_pmenu();
@@ -1479,7 +1520,7 @@ int main(int argc, char **argv) {
       case SDL_MOUSEMOTION:
         mouse_x = e.motion.x * mscale; mouse_y = e.motion.y * mscale;
         if (screen == PLAY && cur && SYS[cur->sys].touch && (e.motion.state & SDL_BUTTON_LMASK) && !panel.open && !pmenu.open && !ctl.open && game_rect.w > 0)
-          rh_set_pointer((mouse_x - game_rect.x) / game_rect.w, (mouse_y - game_rect.y) / game_rect.h, 1);
+          touch_at(mouse_x, mouse_y, 1);
         break;
       case SDL_MOUSEBUTTONUP:
         if (e.button.button == SDL_BUTTON_LEFT && screen == PLAY) rh_set_pointer(0, 0, 0);
@@ -1490,7 +1531,7 @@ int main(int argc, char **argv) {
         // DS 아래 화면: 게임 그림 위를 누르면 터치
         if (e.button.button == SDL_BUTTON_LEFT && screen == PLAY && cur && SYS[cur->sys].touch && !panel.open && !pmenu.open && !ctl.open && !confirm.open && game_rect.w > 0 &&
             mouse_x >= game_rect.x && mouse_x < game_rect.x + game_rect.w && mouse_y >= game_rect.y && mouse_y < game_rect.y + game_rect.h) {
-          rh_set_pointer((mouse_x - game_rect.x) / game_rect.w, (mouse_y - game_rect.y) / game_rect.h, 1);
+          touch_at(mouse_x, mouse_y, 1);
           mouse_click = 0;
         }
         if (e.button.button == SDL_BUTTON_RIGHT && screen == LIB && !confirm.open && !syncui.open) {

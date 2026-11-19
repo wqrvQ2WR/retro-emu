@@ -75,6 +75,10 @@ Download the macOS dmg, Windows zip, Android apk and iOS ipa from [Releases](htt
 - Key bindings are saved **per system**, and **기본값으로** (Reset) restores the defaults.
 - Esc, F1, F2 and F3 (plus F11 on Windows) are reserved for menus and can't be bound to game buttons.
 
+### Rotate screen
+
+Games played with the DS held sideways like a book (e.g. LovePlus) show up lying on their side. **화면 돌리기** (Rotate screen) in the menu turns the picture 90° at a time. It is remembered per game, and touch/mouse input on the bottom screen is rotated to match. Works in all four apps (Esc menu on macOS/Windows, the in-game menu on phones).
+
 ### Game lock
 
 <p>

@@ -13,7 +13,9 @@ final class ScreenView: UIView {
     guard let onPointer, let p = t.first?.location(in: self) else { return }
     let f = image.frame
     guard f.width > 0 else { return }
-    let x = (p.x - f.minX) / f.width, y = (p.y - f.minY) / f.height
+    let u = (p.x - f.minX) / f.width, v = (p.y - f.minY) / f.height
+    // 돌린 화면에서 누른 자리를 원래 그림 자리로
+    let (x, y): (Double, Double) = rotation == 1 ? (v, 1 - u) : rotation == 2 ? (1 - u, 1 - v) : rotation == 3 ? (1 - v, u) : (u, v)
     onPointer(x, y, down && x >= 0 && x <= 1 && y >= 0 && y <= 1)
   }
   override func touchesBegan(_ t: Set<UITouch>, with e: UIEvent?) { pointer(t, true) }
@@ -21,6 +23,8 @@ final class ScreenView: UIView {
   override func touchesEnded(_ t: Set<UITouch>, with e: UIEvent?) { pointer(t, false) }
   override func touchesCancelled(_ t: Set<UITouch>, with e: UIEvent?) { pointer(t, false) }
   private var aspect: Double = 4.0 / 3.0
+  /// 화면 돌리기(시계 방향 90도 단위). 옆으로 드는 DS 게임(러브플러스)용.
+  var rotation = 0 { didSet { if rotation != oldValue { setNeedsLayout() } } }
   /// 세로 화면에선 위에 붙인다
   var alignTop = false { didSet { setNeedsLayout() } }
 
@@ -44,11 +48,17 @@ final class ScreenView: UIView {
     super.layoutSubviews()
     let b = bounds.size
     guard b.width > 0, b.height > 0 else { return }
-    var w = b.width, h = w / aspect
-    if h > b.height { h = b.height; w = h * aspect }
+    let a = rotation % 2 == 1 ? 1 / aspect : aspect
+    var w = b.width, h = w / a
+    if h > b.height { h = b.height; w = h * a }
     let s = window?.screen.scale ?? 2
     w = (w * s).rounded(.down) / s; h = (h * s).rounded(.down) / s
-    image.frame = CGRect(x: ((b.width - w) / 2 * s).rounded() / s, y: alignTop ? 0 : ((b.height - h) / 2 * s).rounded() / s, width: w, height: h)
+    let f = CGRect(x: ((b.width - w) / 2 * s).rounded() / s, y: alignTop ? 0 : ((b.height - h) / 2 * s).rounded() / s, width: w, height: h)
+    // 돌리기 전 크기로 놓고 가운데를 축으로 돌린다
+    image.transform = CATransform3DIdentity
+    image.bounds = CGRect(x: 0, y: 0, width: rotation % 2 == 1 ? h : w, height: rotation % 2 == 1 ? w : h)
+    image.position = CGPoint(x: f.midX, y: f.midY)
+    image.transform = CATransform3DMakeRotation(CGFloat(rotation) * .pi / 2, 0, 0, 1)
   }
 }
 
@@ -56,13 +66,17 @@ struct ScreenRep: UIViewRepresentable {
   let emu: Emulator
   var alignTop = false
   var touch = false
+  var rotation = 0
   func makeUIView(context: Context) -> ScreenView {
     let v = ScreenView()
     if touch { v.onPointer = { x, y, d in emu.setPointer(x, y, d) } }
     emu.onFrame = { [weak v] img, a in v?.show(img, aspect: a) }
     return v
   }
-  func updateUIView(_ v: ScreenView, context: Context) { if v.alignTop != alignTop { v.alignTop = alignTop } }
+  func updateUIView(_ v: ScreenView, context: Context) {
+    if v.alignTop != alignTop { v.alignTop = alignTop }
+    v.rotation = rotation
+  }
 }
 
 // MARK: - 터치 버튼
@@ -401,6 +415,9 @@ struct PlayView: View {
   @State private var padConnected = false
   @AppStorage("bigButtons") private var big = false
   @AppStorage("joystick") private var stick = false
+  /// 화면 돌리기(게임마다 기억)
+  @State private var rotation = 0
+  private var rotKey: String { "rotation." + (game.path as NSString).lastPathComponent }
 
   var body: some View {
     GeometryReader { geo in
@@ -408,14 +425,14 @@ struct PlayView: View {
       ZStack(alignment: .top) {
         Color.black.ignoresSafeArea()
         if landscape || padConnected {
-          ScreenRep(emu: emu, touch: game.system.hasTouch)
+          ScreenRep(emu: emu, touch: game.system.hasTouch, rotation: rotation)
           if !padConnected { ControlsRep(emu: emu, system: game.system, big: big, stick: stick, overlay: true) }
         } else {
           LinearGradient(colors: game.system.gradient, startPoint: .top, endPoint: .bottom).ignoresSafeArea()
           VStack(spacing: 0) {
-            ScreenRep(emu: emu, alignTop: true, touch: game.system.hasTouch)
-              // DS 는 위아래 두 화면이라 세로로 길다: 화면 몫을 더 준다
-              .frame(height: game.system == .nds ? min(geo.size.width * 1.5, geo.size.height * 0.6) : min(geo.size.width * 0.9, geo.size.height * 0.48))
+            ScreenRep(emu: emu, alignTop: true, touch: game.system.hasTouch, rotation: rotation)
+              // DS 는 위아래 두 화면이라 세로로 길다: 화면 몫을 더 준다(옆으로 돌리면 보통 비율)
+              .frame(height: game.system == .nds && rotation % 2 == 0 ? min(geo.size.width * 1.5, geo.size.height * 0.6) : min(geo.size.width * 0.9, geo.size.height * 0.48))
             ControlsRep(emu: emu, system: game.system, big: big, stick: stick, overlay: false)
           }
         }
@@ -429,7 +446,7 @@ struct PlayView: View {
           }.buttonStyle(.plain)
         }.padding(.horizontal, 12).padding(.top, 6)
         if panel {
-          SlotPanel(slots: slots, canSave: canSave, big: $big, stick: $stick, padConnected: padConnected,
+          SlotPanel(slots: slots, canSave: canSave, big: $big, stick: $stick, rotation: $rotation, padConnected: padConnected,
                     onSave: { id in emu.save(slot: id) { slots = emu.slots() } },
                     onLoad: { id in emu.load(slot: id); setPanel(false) },
                     onDelete: { id in emu.delete(slot: id); slots = emu.slots() },
@@ -448,7 +465,9 @@ struct PlayView: View {
     }
     .statusBarHidden(true)
     .persistentSystemOverlays(.hidden)
+    .onChange(of: rotation) { r in UserDefaults.standard.set(r, forKey: rotKey) }
     .onAppear {
+      rotation = UserDefaults.standard.integer(forKey: rotKey)
       emu.onToast = { show($0) }
       emu.onMenu = { setPanel(!panel) }
       emu.onPadUsed = { if !padConnected { padConnected = true; show("게임패드로 하는 중") } }
@@ -530,6 +549,7 @@ struct SlotPanel: View {
   let canSave: Bool
   @Binding var big: Bool
   @Binding var stick: Bool
+  @Binding var rotation: Int
   let padConnected: Bool
   let onSave: (String) -> Void
   let onLoad: (String) -> Void
@@ -567,6 +587,7 @@ struct SlotPanel: View {
               setting("버튼 크기", ["기존", "크게"], big ? 1 : 0) { big = $0 == 1 }
               setting("방향키", ["십자키", "조이스틱"], stick ? 1 : 0) { stick = $0 == 1 }
             }
+            setting("화면 돌리기", ["그대로", "오른쪽", "거꾸로", "왼쪽"], rotation) { rotation = $0 }
             Button(action: onQuit) {
               Text("게임 나가기").font(.system(size: 14, weight: .bold))
                 .foregroundColor(Color(red: 0.85, green: 0.15, blue: 0.40))
