@@ -2,6 +2,7 @@
 #include <android/bitmap.h>
 #include <android/native_window_jni.h>
 #include <pthread.h>
+#include <stdlib.h>
 #include <string.h>
 #include "rhost.h"
 
@@ -70,9 +71,24 @@ F(void, setSurface)(JNIEnv *e, jobject o, jobject surf) {
 }
 
 // maxW/maxH: 화면 뷰의 실제 픽셀 크기
-F(jboolean, present)(JNIEnv *e, jobject o, jint maxW, jint maxH) {
+// rot: 시계 방향 90도 단위(0~3). 러브플러스처럼 옆으로 들고 하는 게임용.
+static uint32_t *g_rot; static size_t g_rot_n;
+F(jboolean, present)(JNIEnv *e, jobject o, jint maxW, jint maxH, jint rot) {
   const uint8_t *p; int w, h;
   if (!rh_video(&p, &w, &h) || w <= 0 || h <= 0) return 0;
+  rot &= 3;
+  if (rot) {
+    size_t n = (size_t)w * h;
+    if (n > g_rot_n) { free(g_rot); g_rot = malloc(n * 4); g_rot_n = g_rot ? n : 0; if (!g_rot) return 0; }
+    const uint32_t *s = (const uint32_t *)p;
+    int nw = (rot & 1) ? h : w, nh = (rot & 1) ? w : h;
+    for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+      int dx, dy;
+      if (rot == 1) { dx = h - 1 - y; dy = x; } else if (rot == 2) { dx = w - 1 - x; dy = h - 1 - y; } else { dx = y; dy = w - 1 - x; }
+      g_rot[(size_t)dy * nw + dx] = s[(size_t)y * w + x];
+    }
+    p = (const uint8_t *)g_rot; w = nw; h = nh;
+  }
   pthread_mutex_lock(&g_wmu);
   if (!g_win) { pthread_mutex_unlock(&g_wmu); return 0; }
   int k = maxW / w; if (maxH / h < k) k = maxH / h;

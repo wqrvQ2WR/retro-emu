@@ -32,6 +32,10 @@ class Engine(private val ctx: Context) {
     /** 화면 갱신 알림(Compose가 읽으면 다시 그림) */
     /** 화면 비율(바뀔 때만 Compose 가 다시 배치) */
     var aspect by mutableStateOf(4.0 / 3.0)
+    /** 화면 돌리기(시계 방향 90도 단위). 게임마다 저장된다. */
+    var rotation by mutableStateOf(0)
+    /** 돌린 뒤 보이는 비율 */
+    val shownAspect get() = if (rotation % 2 == 1) 1.0 / aspect else aspect
     /** 화면 뷰 픽셀 크기. 0이면 아직 서피스 없음 */
     @Volatile private var viewW = 0
     @Volatile private var viewH = 0
@@ -181,6 +185,8 @@ class Engine(private val ctx: Context) {
     }
 
     /** SurfaceView 의 서피스가 생기거나 바뀌거나 없어질 때(메인 스레드) */
+    fun changeRotation(r: Int) { rotation = ((r % 4) + 4) % 4; redraw = true }
+
     fun setSurface(surface: android.view.Surface?, w: Int, h: Int) {
         Native.setSurface(surface)
         viewW = w; viewH = h
@@ -188,7 +194,7 @@ class Engine(private val ctx: Context) {
     }
 
     private fun present() {
-        if (viewW > 0) Native.present(viewW, viewH)
+        if (viewW > 0) Native.present(viewW, viewH, rotation)
         val a = Native.aspect()
         if (a != aspect) aspect = a
     }

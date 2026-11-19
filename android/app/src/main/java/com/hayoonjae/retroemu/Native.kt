@@ -20,7 +20,7 @@ object Native {
     external fun size(): IntArray?
     external fun copyFrame(bmp: Bitmap): Boolean
     external fun setSurface(surface: android.view.Surface?)
-    external fun present(maxW: Int, maxH: Int): Boolean
+    external fun present(maxW: Int, maxH: Int, rot: Int): Boolean
     external fun audioRead(buf: ShortArray, frames: Int): Int
     external fun audioBuffered(): Int
     external fun stateSave(path: String): Boolean

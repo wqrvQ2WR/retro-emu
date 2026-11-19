@@ -312,6 +312,9 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     var slotsOpen by remember { mutableStateOf(false) }
     val prefs = remember { ControlPrefs(ctx) }
+    // 화면 돌리기는 게임마다 기억한다(러브플러스처럼 옆으로 드는 게임)
+    val rotPrefs = remember { ctx.getSharedPreferences("rotation", android.content.Context.MODE_PRIVATE) }
+    LaunchedEffect(rom) { engine.changeRotation(rotPrefs.getInt(rom.name, 0)) }
     val k = if (prefs.big) BIG_SCALE else 1f
 
     // 동기화를 켰으면 다른 기기 저장부터 받고 시작한다
@@ -424,6 +427,10 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
                     MenuItem("저장 / 불러오기") { slotsOpen = true }
                     MenuItem("버튼 크기: " + if (prefs.big) "크게" else "기존") { prefs.big = !prefs.big }
                     MenuItem("방향키: " + if (prefs.stick) "조이스틱" else "십자키") { prefs.stick = !prefs.stick }
+                    MenuItem("화면 돌리기: " + listOf("그대로", "오른쪽으로", "거꾸로", "왼쪽으로")[engine.rotation]) {
+                        engine.changeRotation(engine.rotation + 1)
+                        rotPrefs.edit().putInt(rom.name, engine.rotation).apply()
+                    }
                     MenuItem("나가기") { onExit() }
                 }
             }
@@ -527,7 +534,9 @@ fun Screen(engine: Engine, sys: GameSystem) {
                 // DS 아래 화면 터치: 버퍼는 합성기가 뷰 전체로 늘리고, 뷰는 게임 비율이라 뷰 기준으로 계산한다
                 if (sys.hasTouch) setOnTouchListener { v, e ->
                     if (v.width > 0 && v.height > 0) {
-                        val x = e.x / v.width; val y = e.y / v.height
+                        // 돌린 화면에서 누른 자리(u,v)를 원래 그림 자리로 되돌린다
+                        val u = e.x / v.width; val w = e.y / v.height
+                        val (x, y) = when (engine.rotation) { 1 -> w to 1f - u; 2 -> 1f - u to 1f - w; 3 -> 1f - w to u; else -> u to w }
                         val down = e.actionMasked != android.view.MotionEvent.ACTION_UP && e.actionMasked != android.view.MotionEvent.ACTION_CANCEL
                         engine.setPointer(x, y, down && x in 0f..1f && y in 0f..1f)
                     }
@@ -540,7 +549,7 @@ fun Screen(engine: Engine, sys: GameSystem) {
                 })
             }
         },
-        modifier = Modifier.aspectRatio(engine.aspect.toFloat().coerceIn(0.5f, 3f)).background(Color.Black)
+        modifier = Modifier.aspectRatio(engine.shownAspect.toFloat().coerceIn(0.3f, 3f)).background(Color.Black)
     )
 }
 
