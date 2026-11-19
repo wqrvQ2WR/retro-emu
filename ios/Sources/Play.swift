@@ -103,6 +103,8 @@ final class ControlsView: UIView {
   /// C 버튼은 비트 24~27(위·아래·왼쪽·오른쪽)로 들고 있다가 오른쪽 스틱으로 바꾼다
   static let cBase = 24
 
+  /// 터치 패드를 아날로그 스틱으로 쓸지. N64·게임큐브는 늘, PSP·PS2·PS1 은 "조이스틱"을 고를 때만(기본은 십자키).
+  private var touchAnalog: Bool { system == .n64 || system == .gc || (stick && system.hasAnalog) }
   private var buttons: [Button] = []
   private var padCenter = CGPoint.zero
   private var padRadius: CGFloat = 60
@@ -229,7 +231,7 @@ final class ControlsView: UIView {
   /// 지금 닿아 있는 손가락 전부로 비트마스크를 다시 만든다
   private func update(_ e: UIEvent?, ended: Set<UITouch> = []) {
     var m: UInt32 = 0
-    if system.hasAnalog {
+    if touchAnalog {
       var v = CGPoint.zero
       if let p = padPoint {
         let lim = padRadius * 0.8
@@ -248,7 +250,7 @@ final class ControlsView: UIView {
       let c = Int(m >> UInt32(ControlsView.cBase)) & 0xF
       onRStick?(CGPoint(x: (c & 8 != 0 ? 1 : 0) - (c & 4 != 0 ? 1 : 0), y: (c & 2 != 0 ? 1 : 0) - (c & 1 != 0 ? 1 : 0)))
       setNeedsDisplay()
-    } else if stick || system.hasAnalog {
+    } else if stick || touchAnalog {
       setNeedsDisplay()  // 조이스틱 손잡이 위치
     }
   }
@@ -287,7 +289,7 @@ final class ControlsView: UIView {
     let R = padRadius, pc = padCenter
     UIColor.white.withAlphaComponent(0.16 * dim).setFill()
     UIBezierPath(ovalIn: CGRect(x: pc.x - R, y: pc.y - R, width: R * 2, height: R * 2)).fill()
-    if stick || system.hasAnalog {
+    if stick || touchAnalog {
       var kp = pc
       if let p = padPoint {
         let dx = p.x - pc.x, dy = p.y - pc.y, d = hypot(dx, dy), lim = R * 0.55

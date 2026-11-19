@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -421,7 +422,9 @@ fun GameScreen(rom: File, onExit: () -> Unit, onError: (String) -> Unit) {
         if (menu) {
             Box(Modifier.fillMaxSize().background(Color(0x99000000)).pointerInput(Unit) { awaitEachGesture { awaitFirstDown(); } },
                 contentAlignment = Alignment.Center) {
-                Column(Modifier.clip(RoundedCornerShape(24.dp)).background(Color.White).padding(20.dp).widthIn(min = 240.dp),
+                // 가로 화면에선 메뉴가 화면보다 길어서 스크롤되게(나가기가 안 잘리게)
+                Column(Modifier.systemBarsPadding().padding(vertical = 8.dp).clip(RoundedCornerShape(24.dp)).background(Color.White)
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(20.dp).widthIn(min = 240.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     MenuItem("이어하기") { menu = false }
                     MenuItem("저장 / 불러오기") { slotsOpen = true }
@@ -637,7 +640,9 @@ private fun Engine.setDirs(m: Int) {
 
 @Composable
 fun DirPad(engine: Engine, sys: GameSystem, k: Float, stick: Boolean) =
-    if (sys.hasAnalog) Joystick(engine, k, analog = true) else if (stick) Joystick(engine, k) else DPad(engine, k)
+    // N64·게임큐브는 스틱이 주된 조작이라 늘 아날로그. PSP·PS2 는 십자키가 기본이고 "조이스틱"을 고르면 아날로그 스틱.
+    if (sys == GameSystem.N64 || sys == GameSystem.GC || (stick && sys.hasAnalog)) Joystick(engine, k, analog = true)
+    else if (stick) Joystick(engine, k) else DPad(engine, k)
 
 @Composable
 fun DPad(engine: Engine, k: Float) {
